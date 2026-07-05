@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VIX 历史数据看板</title>
+    <script src="echarts.min.js"></script>
+    <link rel="stylesheet" href="style.css?v=6">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>VIX 历史数据看板</h1>
+            <p class="subtitle">CBOE 官方数据 · 可滑动缩放 · 实时历史百分位</p>
+        </header>
+
+        <div class="controls">
+            <div class="control-group">
+                <label for="percentileSelect">百分位类型</label>
+                <select id="percentileSelect">
+                    <option value="full">全历史百分位</option>
+                    <option value="252">滚动 1 年百分位 (252 交易日)</option>
+                    <option value="1260">滚动 5 年百分位 (1260 交易日)</option>
+                    <option value="2520">滚动 10 年百分位 (2520 交易日)</option>
+                </select>
+            </div>
+            <div class="control-group">
+                <label for="chartType">百分位显示</label>
+                <select id="chartType">
+                    <option value="line">折线</option>
+                    <option value="area">面积图</option>
+                </select>
+            </div>
+            <div class="control-group">
+                <button id="resetZoom">重置缩放</button>
+            </div>
+        </div>
+
+        <div class="stats" id="stats">
+            <div class="stat-card">
+                <div class="stat-label">最新日期</div>
+                <div class="stat-value" id="statDate">-</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">最新 VIX</div>
+                <div class="stat-value" id="statClose">-</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">最新百分位</div>
+                <div class="stat-value" id="statPercentile">-</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">历史最高</div>
+                <div class="stat-value" id="statMax">-</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">历史最低</div>
+                <div class="stat-value" id="statMin">-</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">历史均值</div>
+                <div class="stat-value" id="statMean">-</div>
+            </div>
+        </div>
+
+        <div id="chart" class="chart" aria-label="VIX 历史收盘价与百分位图表，可使用鼠标滚轮缩放、拖动平移"></div>
+
+        <div class="info">
+            <h3>使用说明</h3>
+            <ul>
+                <li><strong>缩放：</strong>鼠标滚轮、双指捏合，或拖动底部滑块</li>
+                <li><strong>滑动：</strong>按住图表空白处左右拖动，或使用底部滑块</li>
+                <li><strong>双图布局：</strong>上方为 VIX 历史收盘价，下方为对应历史百分位，共享同一个缩放与滑动条</li>
+                <li><strong>百分位：</strong>表示当前 VIX 收盘价在全历史数据中的位置（0-100%）；也可切换为滚动 1/5/10 年百分位</li>
+                <li><strong>数据来源：</strong>CBOE 官方 VIX_History.csv（1990-01-02 至今）</li>
+            </ul>
+        </div>
+    </div>
+
+    <script src="dashboard.js?v=6"></script>
+</body>
+</html>
