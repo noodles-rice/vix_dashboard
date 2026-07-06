@@ -45,6 +45,7 @@ class VIXDashboard {
         this.chart = echarts.init(chartDom);
         this.bindEvents();
         this.loadData();
+        this.loadUpdateInfo();
 
         this.resizeHandler = () => {
             if (this.chart) this.chart.resize();
@@ -119,6 +120,57 @@ class VIXDashboard {
             console.error('[VIX Dashboard] Load error:', error);
             this.showError(error.message);
         }
+    }
+
+    async loadUpdateInfo() {
+        const elem = document.getElementById('statUpdateTime');
+        try {
+            const response = await fetch('last_update.json');
+            if (!response.ok) {
+                if (response.status === 404) {
+                    elem.textContent = '未记录';
+                    return;
+                }
+                throw new Error(`HTTP ${response.status}`);
+            }
+            const info = await response.json();
+            const updatedAt = info.updatedAt ? this.formatDateTime(info.updatedAt) : '未知';
+            elem.textContent = updatedAt;
+            elem.title = `数据源: ${info.source || 'CBOE'}\n最新数据日期: ${info.latestDate || '未知'}\n状态: ${this.translateStatus(info.status)}`;
+        } catch (error) {
+            console.warn('[VIX Dashboard] Update info load failed:', error);
+            elem.textContent = '未知';
+        }
+    }
+
+    formatDateTime(isoString) {
+        try {
+            const date = new Date(isoString);
+            if (isNaN(date.getTime())) return '未知';
+            const options = {
+                year: 'numeric',
+                month: '2-digit',
+                day: '2-digit',
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit',
+                hour12: false
+            };
+            return date.toLocaleString('zh-CN', options);
+        } catch (e) {
+            return '未知';
+        }
+    }
+
+    translateStatus(status) {
+        const map = {
+            updated: '已更新',
+            up_to_date: '已是最新',
+            network_error: '网络错误',
+            fetch_error: '获取失败',
+            parse_error: '解析失败'
+        };
+        return map[status] || status;
     }
 
     showLoading(message) {

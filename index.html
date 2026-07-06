@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>VIX 历史数据看板</title>
     <script src="echarts.min.js"></script>
-    <link rel="stylesheet" href="style.css?v=6">
+    <link rel="stylesheet" href="style.css?v=7">
 </head>
 <body>
     <div class="container">
@@ -61,6 +61,10 @@
                 <div class="stat-label">历史均值</div>
                 <div class="stat-value" id="statMean">-</div>
             </div>
+            <div class="stat-card">
+                <div class="stat-label">数据更新时间</div>
+                <div class="stat-value" id="statUpdateTime">-</div>
+            </div>
         </div>
 
         <div id="chart" class="chart" aria-label="VIX 历史收盘价与百分位图表，可使用鼠标滚轮缩放、拖动平移"></div>
@@ -77,6 +81,6 @@
         </div>
     </div>
 
-    <script src="dashboard.js?v=6"></script>
+    <script src="dashboard.js?v=7"></script>
 </body>
 </html>
