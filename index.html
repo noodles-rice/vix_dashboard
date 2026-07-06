@@ -3,10 +3,13 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
     <title>VIX 历史数据看板</title>
     <script src="assets/echarts.min.js"></script>
-    <script src="assets/dashboard_core.js?v=1"></script>
-    <link rel="stylesheet" href="assets/style.css?v=8">
+    <script src="assets/dashboard_core.js?v=3"></script>
+    <link rel="stylesheet" href="assets/style.css?v=10">
 </head>
 <body>
     <div class="container">
@@ -46,6 +49,10 @@
                 <div class="stat-value" id="statPercentile">-</div>
             </div>
             <div class="stat-card">
+                <div class="stat-label">当前区间</div>
+                <div class="stat-value" id="statRegime">-</div>
+            </div>
+            <div class="stat-card">
                 <div class="stat-label">历史最高</div>
                 <div class="stat-value" id="statMax">-</div>
             </div>
@@ -63,6 +70,12 @@
             </div>
         </div>
 
+        <div class="thresholds" id="thresholds">
+            <h3>VIX 经济含义区间参考</h3>
+            <div class="threshold-table" id="thresholdTable"></div>
+            <p class="threshold-note">阈值基于市场长期交易经验（13、20、30、40 为常见心理关口），用于快速判断当前市场恐慌程度，非统计分位数。</p>
+        </div>
+
         <div id="chart" class="chart" aria-label="VIX 历史 K 线与百分位图表，可使用鼠标滚轮缩放、拖动平移"></div>
 
         <div class="info">
@@ -77,6 +90,6 @@
         </div>
     </div>
 
-    <script src="assets/dashboard.js?v=11"></script>
+    <script src="assets/dashboard.js?v=14"></script>
 </body>
 </html>

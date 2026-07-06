@@ -26,6 +26,38 @@ const PERCENTILE_PIECES = [
 ];
 
 /**
+ * VIX 经济含义区间阈值。
+ *
+ * 这些阈值来自市场长期交易经验（13、20、30、40 为常见心理关口），
+ * 用于把 VIX 收盘价划分为具有业务含义的 regime。
+ * 区间左闭右开，最后一档闭合。
+ */
+const VIX_THRESHOLDS = [
+    { min: 0, max: 13, maxOpen: true, label: '恐慌缺失', description: '市场过度乐观，波动率常被低估', color: '#22c55e' },
+    { min: 13, max: 20, maxOpen: true, label: '低波动常态', description: '正常低波动环境，VIX 长期均值附近', color: '#84cc16' },
+    { min: 20, max: 30, maxOpen: true, label: '市场担忧', description: '避险情绪升温，回调压力增大', color: '#eab308' },
+    { min: 30, max: 40, maxOpen: true, label: '显著恐慌', description: '明显恐慌，流动性收缩，期权保护需求激增', color: '#f97316' },
+    { min: 40, max: Infinity, label: '极端危机', description: '系统性危机或黑天鹅事件，通常伴随股市大跌', color: '#ef4444' }
+];
+
+/**
+ * 根据 VIX 收盘价查找对应的经济含义区间（regime）。
+ *
+ * 对非法输入（非数字、NaN、负数、Infinity）返回 null，避免错误映射到极端区间。
+ */
+function getVIXRegime(value) {
+    if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
+        return null;
+    }
+
+    return VIX_THRESHOLDS.find(t => {
+        const aboveMin = value >= t.min;
+        const belowMax = t.maxOpen ? value < t.max : value <= t.max;
+        return aboveMin && belowMax;
+    }) || null;
+}
+
+/**
  * 转义 HTML 特殊字符，防止 XSS。
  */
 function escapeHtml(str) {
@@ -173,6 +205,8 @@ const VIXDashboardCore = {
     VIX_MARK_LINE_HIGH,
     PERCENTILE_MARK_LINE_MEDIAN,
     PERCENTILE_PIECES,
+    VIX_THRESHOLDS,
+    getVIXRegime,
     escapeHtml,
     parseDate,
     parseCSV,

@@ -161,6 +161,83 @@ header h1 {
     color: var(--color-text-primary);
 }
 
+.thresholds {
+    background: var(--color-surface);
+    padding: 20px;
+    border-radius: 12px;
+    border: 1px solid var(--color-border);
+    margin-bottom: 20px;
+}
+
+.thresholds h3 {
+    font-size: 1.1rem;
+    margin-bottom: 14px;
+    color: var(--color-text-primary);
+}
+
+.threshold-ref-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.95rem;
+}
+
+.threshold-ref-table th,
+.threshold-ref-table td {
+    padding: 10px 12px;
+    text-align: left;
+    border-bottom: 1px solid var(--color-border);
+}
+
+.threshold-ref-table th {
+    color: var(--color-text-muted);
+    font-weight: 600;
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.threshold-ref-table td {
+    color: var(--color-text-secondary);
+}
+
+.threshold-range {
+    font-weight: 700;
+    white-space: nowrap;
+    width: 140px;
+}
+
+.threshold-label {
+    font-weight: 600;
+    width: 120px;
+}
+
+.threshold-desc {
+    color: var(--color-text-muted);
+}
+
+.threshold-note {
+    margin-top: 14px;
+    font-size: 0.85rem;
+    color: var(--color-text-muted);
+    line-height: 1.5;
+}
+
+@media (max-width: 768px) {
+    .threshold-ref-table th,
+    .threshold-ref-table td {
+        padding: 8px;
+        font-size: 0.85rem;
+    }
+
+    .threshold-range {
+        width: auto;
+    }
+
+    .threshold-label {
+        width: auto;
+    }
+}
+
 .loading {
     display: flex;
     flex-direction: column;

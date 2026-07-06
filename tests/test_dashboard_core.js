@@ -114,6 +114,32 @@ function testPercentileWindows() {
     assert.deepStrictEqual(core.PERCENTILE_WINDOWS.map(w => w.value), ['full', 252, 1260, 2520]);
 }
 
+function testVIXThresholdsStructure() {
+    assert.ok(core.VIX_THRESHOLDS.length >= 4);
+    assert.ok(core.VIX_THRESHOLDS.every(t => typeof t.label === 'string'));
+    assert.ok(core.VIX_THRESHOLDS.every(t => typeof t.description === 'string'));
+    assert.ok(core.VIX_THRESHOLDS.every(t => typeof t.color === 'string'));
+    assert.strictEqual(core.VIX_THRESHOLDS[core.VIX_THRESHOLDS.length - 1].max, Infinity);
+}
+
+function testGetVIXRegime() {
+    assert.strictEqual(core.getVIXRegime(10).label, '恐慌缺失');
+    assert.strictEqual(core.getVIXRegime(13).label, '低波动常态');
+    assert.strictEqual(core.getVIXRegime(19.99).label, '低波动常态');
+    assert.strictEqual(core.getVIXRegime(20).label, '市场担忧');
+    assert.strictEqual(core.getVIXRegime(35).label, '显著恐慌');
+    assert.strictEqual(core.getVIXRegime(40).label, '极端危机');
+    assert.strictEqual(core.getVIXRegime(80).label, '极端危机');
+}
+
+function testGetVIXRegimeInvalidInputs() {
+    assert.strictEqual(core.getVIXRegime(-1), null);
+    assert.strictEqual(core.getVIXRegime(NaN), null);
+    assert.strictEqual(core.getVIXRegime(Infinity), null);
+    assert.strictEqual(core.getVIXRegime(undefined), null);
+    assert.strictEqual(core.getVIXRegime('30'), null);
+}
+
 function runTests() {
     const tests = [
         testEscapeHtml,
@@ -125,6 +151,9 @@ function runTests() {
         testComputeRollingPercentile,
         testComputeRollingPercentileWithDuplicates,
         testPercentileWindows,
+        testVIXThresholdsStructure,
+        testGetVIXRegime,
+        testGetVIXRegimeInvalidInputs,
     ];
 
     let passed = 0;

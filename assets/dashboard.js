@@ -61,6 +61,61 @@ class VIXDashboard {
         });
     }
 
+    renderThresholdTable() {
+        const container = document.getElementById('thresholdTable');
+        if (!container) return;
+
+        const thresholds = VIXDashboardCore.VIX_THRESHOLDS;
+        const table = document.createElement('table');
+        table.className = 'threshold-ref-table';
+
+        const thead = document.createElement('thead');
+        const headerRow = document.createElement('tr');
+        ['区间', '经济含义', '说明'].forEach(text => {
+            const th = document.createElement('th');
+            th.textContent = text;
+            headerRow.appendChild(th);
+        });
+        thead.appendChild(headerRow);
+        table.appendChild(thead);
+
+        const tbody = document.createElement('tbody');
+        thresholds.forEach((t, index) => {
+            const isFirst = index === 0;
+            const isLast = index === thresholds.length - 1;
+            let rangeText;
+            if (isFirst) {
+                rangeText = `VIX < ${t.max}`;
+            } else if (isLast) {
+                rangeText = `VIX ≥ ${t.min}`;
+            } else {
+                rangeText = `${t.min} ≤ VIX < ${t.max}`;
+            }
+            const row = document.createElement('tr');
+
+            const rangeCell = document.createElement('td');
+            rangeCell.className = 'threshold-range';
+            rangeCell.style.color = t.color;
+            rangeCell.textContent = rangeText;
+            row.appendChild(rangeCell);
+
+            const labelCell = document.createElement('td');
+            labelCell.className = 'threshold-label';
+            labelCell.style.color = t.color;
+            labelCell.textContent = t.label;
+            row.appendChild(labelCell);
+
+            const descCell = document.createElement('td');
+            descCell.className = 'threshold-desc';
+            descCell.textContent = t.description;
+            row.appendChild(descCell);
+
+            tbody.appendChild(row);
+        });
+        table.appendChild(tbody);
+        container.appendChild(table);
+    }
+
     init() {
         if (typeof echarts === 'undefined') {
             this.showError('ECharts 库加载失败，请刷新页面重试');
@@ -68,6 +123,7 @@ class VIXDashboard {
         }
 
         this.populatePercentileOptions();
+        this.renderThresholdTable();
 
         const chartDom = document.getElementById('chart');
         this.chart = echarts.init(chartDom);
@@ -325,10 +381,15 @@ class VIXDashboard {
         const percentile = last[percentileKey] !== undefined ? last[percentileKey] : last.percentileFull;
 
         const percentilePiece = this.getPercentilePiece(percentile);
+        const regime = VIXDashboardCore.getVIXRegime(last.close);
         document.getElementById('statDate').textContent = last.dateStr;
         document.getElementById('statClose').textContent = last.close.toFixed(2);
         document.getElementById('statPercentile').textContent = percentile.toFixed(1) + '%' + (percentilePiece ? ' ' + percentilePiece.label : '');
         document.getElementById('statPercentile').style.color = percentilePiece ? percentilePiece.color : this.colors.textMuted;
+        const regimeElem = document.getElementById('statRegime');
+        regimeElem.textContent = regime ? regime.label : '未知';
+        regimeElem.style.color = regime ? regime.color : this.colors.textMuted;
+        regimeElem.title = regime ? regime.description : '无法判断当前 VIX 区间';
         document.getElementById('statMax').textContent = max.toFixed(2);
         document.getElementById('statMin').textContent = min.toFixed(2);
         document.getElementById('statMean').textContent = mean.toFixed(2);
