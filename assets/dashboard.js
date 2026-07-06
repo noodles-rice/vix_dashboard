@@ -418,33 +418,18 @@ class VIXDashboard {
                     return html;
                 }
             },
-            // 保留图例作为视觉标识，但禁用点击交互，避免用户误操作隐藏序列
-            legend: [
-                {
-                    data: ['VIX K线'],
-                    top: '6%',
-                    selectedMode: false,
-                    textStyle: { color: c.textMuted }
-                },
-                {
-                    data: [percentileLabel],
-                    top: '57%',
-                    selectedMode: false,
-                    textStyle: { color: c.textMuted }
-                }
-            ],
             grid: [
                 {
                     left: '3%',
                     right: '4%',
-                    top: '14%',
-                    height: '37%',
+                    top: '8%',
+                    height: '40%',
                     containLabel: true
                 },
                 {
                     left: '3%',
                     right: '4%',
-                    top: '62%',
+                    top: '59%',
                     height: '29%',
                     containLabel: true
                 }
