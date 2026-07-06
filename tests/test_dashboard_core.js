@@ -5,7 +5,7 @@
  */
 
 const assert = require('assert');
-const core = require('./dashboard_core.js');
+const core = require('../assets/dashboard_core.js');
 
 function testEscapeHtml() {
     assert.strictEqual(core.escapeHtml('<script>alert(1)</script>'), '&lt;script&gt;alert(1)&lt;/script&gt;');

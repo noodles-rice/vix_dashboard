@@ -11,14 +11,18 @@ import os
 import socketserver
 import sys
 from datetime import datetime, timezone
+from pathlib import Path
 from urllib.error import URLError
 from urllib.request import Request, urlopen
 
 CBOE_VIX_URL = (
     "https://cdn.cboe.com/api/global/us_indices/daily_prices/VIX_History.csv"
 )
-LOCAL_CSV = "VIX_History.csv"
-UPDATE_INFO = "last_update.json"
+
+# 所有路径均基于脚本位置解析，确保无论从哪个目录启动行为一致
+BASE_DIR = Path(__file__).resolve().parent.parent
+LOCAL_CSV = str(BASE_DIR / "data" / "VIX_History.csv")
+UPDATE_INFO = str(BASE_DIR / "data" / "last_update.json")
 DEFAULT_PORT = 8080
 
 
@@ -124,6 +128,7 @@ def update_vix_data():
     }
 
     if local_date is None or remote_date > local_date:
+        os.makedirs(os.path.dirname(LOCAL_CSV), exist_ok=True)
         with open(LOCAL_CSV, "w", encoding="utf-8", newline="") as f:
             f.write(remote_text)
 
@@ -160,13 +165,20 @@ def write_update_info(info):
         "updatedAt": datetime.now(timezone.utc).isoformat(),
         **info,
     }
+    os.makedirs(os.path.dirname(UPDATE_INFO), exist_ok=True)
     with open(UPDATE_INFO, "w", encoding="utf-8") as f:
         json.dump(record, f, ensure_ascii=False, indent=2)
     print(f"[VIX Updater] 更新时间已记录到 {UPDATE_INFO}")
 
 
 class CORSRequestHandler(http.server.SimpleHTTPRequestHandler):
-    """简单的 HTTP 请求处理器，允许本地开发跨域请求。"""
+    """简单的 HTTP 请求处理器，允许本地开发跨域请求。
+
+    始终以项目根目录作为静态资源服务根，避免依赖启动时的工作目录。
+    """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, directory=str(BASE_DIR), **kwargs)
 
     def end_headers(self):
         self.send_header("Access-Control-Allow-Origin", "*")

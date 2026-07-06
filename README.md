@@ -6,28 +6,28 @@
 
 | 文件 | 说明 |
 |---|---|
-| `VIX_History.csv` | CBOE 官方 VIX 日线数据（1990-01-02 至今） |
-| `last_update.json` | 数据更新时间与状态记录（由 `start.py` 维护） |
+| `data/VIX_History.csv` | CBOE 官方 VIX 日线数据（1990-01-02 至今） |
+| `data/last_update.json` | 数据更新时间与状态记录（由 `scripts/start.py` 维护） |
 | `index.html` | 看板主页面 |
-| `dashboard.js` | 图表逻辑、交互事件、更新时间展示 |
-| `dashboard_core.js` | 可测试的纯函数核心：CSV 解析、日期解析、百分位计算 |
-| `style.css` | 页面样式 |
-| `start.py` | 启动脚本：自动更新 VIX 数据并启动本地 HTTP 服务 |
-| `test_start.py` | `start.py` 的单元测试 |
-| `test_dashboard_core.js` | `dashboard_core.js` 的单元测试 |
+| `assets/dashboard.js` | 图表逻辑、交互事件、更新时间展示 |
+| `assets/dashboard_core.js` | 可测试的纯函数核心：CSV 解析、日期解析、百分位计算 |
+| `assets/style.css` | 页面样式 |
+| `scripts/start.py` | 启动脚本：自动更新 VIX 数据并启动本地 HTTP 服务 |
+| `tests/test_start.py` | `scripts/start.py` 的单元测试 |
+| `tests/test_dashboard_core.js` | `assets/dashboard_core.js` 的单元测试 |
 
 ## 启动方式
 
-由于浏览器安全策略，本地 CSV 文件需要通过 HTTP 服务器加载。本项目提供 `start.py` 启动脚本，在启动服务前会自动从 CBOE 拉取最新 VIX 数据并更新本地 CSV：
+由于浏览器安全策略，本地 CSV 文件需要通过 HTTP 服务器加载。本项目提供 `scripts/start.py` 启动脚本，在启动服务前会自动从 CBOE 拉取最新 VIX 数据并更新本地 CSV：
 
 ```bash
-python3 start.py
+python3 scripts/start.py
 ```
 
 默认监听 `8080` 端口，也可自定义端口：
 
 ```bash
-python3 start.py 9000
+python3 scripts/start.py 9000
 ```
 
 然后在浏览器中打开：

@@ -1,11 +1,17 @@
 #!/usr/bin/env python3
 """start.py 的单元测试。"""
 
+import socketserver
 import sys
+import tempfile
+import threading
 import unittest
 from io import StringIO
+from pathlib import Path
 from unittest.mock import patch
+from urllib.request import urlopen
 
+sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
 import start
 
 
@@ -86,6 +92,37 @@ class TestMainPortValidation(unittest.TestCase):
     def test_port_zero_uses_default(self):
         port = self._run_main_with_argv(["start.py", "0"])
         self.assertEqual(port, 8080)
+
+
+class TestServerRoot(unittest.TestCase):
+    """验证 HTTP 服务始终以项目根目录作为静态资源根。"""
+
+    def test_handler_serves_from_project_root(self):
+        original_base_dir = start.BASE_DIR
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmpdir_path = Path(tmpdir)
+            (tmpdir_path / "index.html").write_text("<html>test</html>", encoding="utf-8")
+            (tmpdir_path / "assets").mkdir()
+            (tmpdir_path / "assets" / "dashboard.js").write_text("// js", encoding="utf-8")
+
+            start.BASE_DIR = tmpdir_path
+            try:
+                server = socketserver.TCPServer(("127.0.0.1", 0), start.CORSRequestHandler)
+                port = server.server_address[1]
+                thread = threading.Thread(target=server.serve_forever)
+                thread.daemon = True
+                thread.start()
+
+                try:
+                    with urlopen(f"http://127.0.0.1:{port}/index.html") as resp:
+                        self.assertEqual(resp.read().decode("utf-8"), "<html>test</html>")
+                    with urlopen(f"http://127.0.0.1:{port}/assets/dashboard.js") as resp:
+                        self.assertEqual(resp.read().decode("utf-8"), "// js")
+                finally:
+                    server.shutdown()
+                    server.server_close()
+            finally:
+                start.BASE_DIR = original_base_dir
 
 
 if __name__ == "__main__":

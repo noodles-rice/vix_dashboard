@@ -4,4 +4,4 @@ __pycache__/
 *$py.class
 
 # Runtime generated update metadata
-last_update.json
+data/last_update.json

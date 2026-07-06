@@ -119,7 +119,7 @@ class VIXDashboard {
     async loadData() {
         this.showLoading('正在加载 VIX 历史数据...');
         try {
-            const response = await fetch('VIX_History.csv');
+            const response = await fetch('data/VIX_History.csv');
             if (!response.ok) {
                 throw new Error(`HTTP ${response.status}: ${response.statusText}`);
             }
@@ -163,7 +163,7 @@ class VIXDashboard {
     async loadUpdateInfo() {
         const elem = document.getElementById('statUpdateTime');
         try {
-            const response = await fetch('last_update.json');
+            const response = await fetch('data/last_update.json');
             if (!response.ok) {
                 if (response.status === 404) {
                     elem.textContent = '未记录';
