@@ -2,6 +2,15 @@ const VIX_MARK_LINE_LOW = 20;
 const VIX_MARK_LINE_HIGH = 30;
 const PERCENTILE_MARK_LINE_MEDIAN = 50;
 
+// 0-100% 按 20% 一档离散着色，从绿到红；左闭右开，最后一个区间闭合
+const PERCENTILE_PIECES = [
+    { min: 0, max: 20, maxOpen: true, color: '#22c55e', label: '极低' },
+    { min: 20, max: 40, maxOpen: true, color: '#84cc16', label: '偏低' },
+    { min: 40, max: 60, maxOpen: true, color: '#eab308', label: '中等' },
+    { min: 60, max: 80, maxOpen: true, color: '#f97316', label: '偏高' },
+    { min: 80, max: 100, color: '#ef4444', label: '极高' }
+];
+
 class VIXDashboard {
     constructor() {
         this.data = [];
@@ -33,6 +42,23 @@ class VIXDashboard {
             danger: get('--color-danger', '#ef4444'),
             error: get('--color-error', '#f87171')
         };
+    }
+
+    getPercentilePieces() {
+        return PERCENTILE_PIECES;
+    }
+
+    getPercentilePiece(value) {
+        return this.getPercentilePieces().find(p => {
+            const aboveMin = value >= p.min;
+            const belowMax = p.maxOpen ? value < p.max : value <= p.max;
+            return aboveMin && belowMax;
+        });
+    }
+
+    getPercentilePieceColor(value) {
+        const piece = this.getPercentilePiece(value);
+        return piece ? piece.color : this.colors.textMuted;
     }
 
     init() {
@@ -415,9 +441,11 @@ class VIXDashboard {
         const percentileKey = this.getPercentileKey();
         const percentile = last[percentileKey] !== undefined ? last[percentileKey] : last.percentileFull;
 
+        const percentilePiece = this.getPercentilePiece(percentile);
         document.getElementById('statDate').textContent = last.dateStr;
         document.getElementById('statClose').textContent = last.close.toFixed(2);
-        document.getElementById('statPercentile').textContent = percentile.toFixed(1) + '%';
+        document.getElementById('statPercentile').textContent = percentile.toFixed(1) + '%' + (percentilePiece ? ' ' + percentilePiece.label : '');
+        document.getElementById('statPercentile').style.color = percentilePiece ? percentilePiece.color : this.colors.textMuted;
         document.getElementById('statMax').textContent = max.toFixed(2);
         document.getElementById('statMin').textContent = min.toFixed(2);
         document.getElementById('statMean').textContent = mean.toFixed(2);
@@ -588,6 +616,18 @@ class VIXDashboard {
                     }
                 }
             ],
+            visualMap: {
+                type: 'piecewise',
+                seriesIndex: 1,
+                dimension: 1,
+                show: false,
+                pieces: this.getPercentilePieces().map(p => ({
+                    min: p.min,
+                    max: p.max,
+                    maxOpen: p.maxOpen,
+                    color: p.color
+                }))
+            },
             series: [
                 {
                     name: 'VIX 收盘价',
@@ -636,14 +676,8 @@ class VIXDashboard {
                     yAxisIndex: 1,
                     smooth: true,
                     symbol: 'none',
-                    lineStyle: { color: c.secondary, width: 2 },
-                    itemStyle: { color: c.secondary },
-                    areaStyle: chartType === 'area' ? {
-                        color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
-                            { offset: 0, color: this.hexToRgba(c.secondary, 0.4) },
-                            { offset: 1, color: this.hexToRgba(c.secondary, 0.05) }
-                        ])
-                    } : null,
+                    lineStyle: { width: 2 },
+                    areaStyle: chartType === 'area' ? { opacity: 0.35 } : null,
                     markLine: {
                         silent: true,
                         symbol: 'none',
