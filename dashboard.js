@@ -1,21 +1,10 @@
-const VIX_MARK_LINE_LOW = 20;
-const VIX_MARK_LINE_HIGH = 30;
-const PERCENTILE_MARK_LINE_MEDIAN = 50;
-
-// 0-100% 按 20% 一档离散着色，从绿到红；左闭右开，最后一个区间闭合
-const PERCENTILE_PIECES = [
-    { min: 0, max: 20, maxOpen: true, color: '#22c55e', label: '极低' },
-    { min: 20, max: 40, maxOpen: true, color: '#84cc16', label: '偏低' },
-    { min: 40, max: 60, maxOpen: true, color: '#eab308', label: '中等' },
-    { min: 60, max: 80, maxOpen: true, color: '#f97316', label: '偏高' },
-    { min: 80, max: 100, color: '#ef4444', label: '极高' }
-];
-
 class VIXDashboard {
     constructor() {
         this.data = [];
         this.dates = [];
         this.closes = [];
+        this.ohlc = [];
+        this.flatDots = [];
         this.chart = null;
         this.computedWindows = new Set(['full']);
         this.resizeHandler = null;
@@ -45,7 +34,7 @@ class VIXDashboard {
     }
 
     getPercentilePieces() {
-        return PERCENTILE_PIECES;
+        return VIXDashboardCore.PERCENTILE_PIECES;
     }
 
     getPercentilePiece(value) {
@@ -61,11 +50,24 @@ class VIXDashboard {
         return piece ? piece.color : this.colors.textMuted;
     }
 
+    populatePercentileOptions() {
+        const select = document.getElementById('percentileSelect');
+        select.innerHTML = '';
+        VIXDashboardCore.PERCENTILE_WINDOWS.forEach(w => {
+            const option = document.createElement('option');
+            option.value = w.value;
+            option.textContent = w.label;
+            select.appendChild(option);
+        });
+    }
+
     init() {
         if (typeof echarts === 'undefined') {
             this.showError('ECharts 库加载失败，请刷新页面重试');
             return;
         }
+
+        this.populatePercentileOptions();
 
         const chartDom = document.getElementById('chart');
         this.chart = echarts.init(chartDom);
@@ -107,6 +109,11 @@ class VIXDashboard {
                 end: 100
             });
         });
+
+        this.chart.on('dataZoom', (params) => {
+            const batch = params.batch && params.batch[0];
+            if (batch) this.updateVisibleMaxMarkPoint(batch);
+        });
     }
 
     async loadData() {
@@ -118,13 +125,18 @@ class VIXDashboard {
             }
             const text = await response.text();
 
-            this.data = this.parseCSV(text);
+            this.data = VIXDashboardCore.parseCSV(text);
             this.dates = this.data.map(d => d.dateStr);
             this.closes = this.data.map(d => d.close);
 
             if (this.data.length === 0) {
                 throw new Error('CSV 解析结果为空');
             }
+
+            this.ohlc = this.data.map(d => [d.open, d.close, d.low, d.high]);
+            this.flatDots = this.data
+                .map((d, i) => (d.open === d.high && d.high === d.low && d.low === d.close) ? [i, d.close] : null)
+                .filter(p => p !== null);
 
             this.hideLoading();
             this.showLoading('正在计算历史百分位...');
@@ -275,143 +287,19 @@ class VIXDashboard {
     }
 
     parseCSV(text) {
-        const lines = text.trim().split(/\r?\n/);
-        if (lines.length < 2) {
-            throw new Error('CSV 文件内容不足');
-        }
-
-        const headers = lines[0].split(',').map(h => h.trim().toUpperCase());
-        const dateIdx = headers.indexOf('DATE');
-        const closeIdx = headers.indexOf('CLOSE');
-        const openIdx = headers.indexOf('OPEN');
-        const highIdx = headers.indexOf('HIGH');
-        const lowIdx = headers.indexOf('LOW');
-
-        if (dateIdx === -1 || closeIdx === -1) {
-            throw new Error('CSV 缺少必需的 DATE 或 CLOSE 列');
-        }
-
-        const data = [];
-        for (let i = 1; i < lines.length; i++) {
-            const cols = lines[i].split(',');
-            if (cols.length < Math.max(dateIdx, closeIdx) + 1) continue;
-
-            const dateStr = cols[dateIdx].trim();
-            const date = this.parseDate(dateStr);
-            if (!date || isNaN(date.getTime())) continue;
-
-            const close = parseFloat(cols[closeIdx]);
-            if (isNaN(close)) continue;
-
-            data.push({
-                date: date,
-                dateStr: dateStr,
-                open: openIdx !== -1 ? parseFloat(cols[openIdx]) : close,
-                high: highIdx !== -1 ? parseFloat(cols[highIdx]) : close,
-                low: lowIdx !== -1 ? parseFloat(cols[lowIdx]) : close,
-                close: close
-            });
-        }
-
-        return data.sort((a, b) => a.date - b.date);
+        return VIXDashboardCore.parseCSV(text);
     }
 
     parseDate(dateStr) {
-        // CBOE format: MM/DD/YYYY
-        const parts = dateStr.split('/');
-        if (parts.length !== 3) return null;
-        const month = parseInt(parts[0], 10) - 1;
-        const day = parseInt(parts[1], 10);
-        const year = parseInt(parts[2], 10);
-        // 使用 UTC 避免用户本地时区导致日期偏移或夏令时边界问题
-        return new Date(Date.UTC(year, month, day));
+        return VIXDashboardCore.parseDate(dateStr);
     }
 
     computeFullPercentile() {
-        const n = this.data.length;
-        const closes = this.closes;
-
-        // 全历史百分位：采用 percentile rank 定义，范围 (0, 100]。
-        // 最小值约为 100/n%，最大值为 100%，而非标准定义中的 [0, 100]。
-        const sorted = closes.map((value, index) => ({ value, index }))
-            .sort((a, b) => a.value - b.value || a.index - b.index);
-
-        for (let rank = 0; rank < n; rank++) {
-            const idx = sorted[rank].index;
-            this.data[idx].percentileFull = ((rank + 1) / n) * 100;
-        }
+        VIXDashboardCore.computeFullPercentile(this.data, this.closes);
     }
 
     computeRollingPercentile(window) {
-        const n = this.data.length;
-        const key = `percentile${window}`;
-        const closes = this.closes;
-
-        // 使用排序窗口 + 二分查找优化，复杂度 O(n log window)。
-        // 注意：前 window - 1 个数据点窗口未满，使用扩展窗口（已有全部数据）计算，
-        // 因此早期数据实际为“自起始以来的累计百分位”。
-        let sortedWindow = [];
-        const percentileRankInSorted = (sortedArr, target) => {
-            let left = 0;
-            let right = sortedArr.length;
-            while (left < right) {
-                const mid = Math.floor((left + right) / 2);
-                if (sortedArr[mid] <= target) {
-                    left = mid + 1;
-                } else {
-                    right = mid;
-                }
-            }
-            return left;
-        };
-
-        const insertSorted = (sortedArr, value) => {
-            let left = 0;
-            let right = sortedArr.length;
-            while (left < right) {
-                const mid = Math.floor((left + right) / 2);
-                if (sortedArr[mid] <= value) {
-                    left = mid + 1;
-                } else {
-                    right = mid;
-                }
-            }
-            sortedArr.splice(left, 0, value);
-        };
-
-        const removeValue = (sortedArr, value) => {
-            let left = 0;
-            let right = sortedArr.length;
-            while (left < right) {
-                const mid = Math.floor((left + right) / 2);
-                if (sortedArr[mid] < value) {
-                    left = mid + 1;
-                } else {
-                    right = mid;
-                }
-            }
-            // 找到第一个 >= value 的位置，然后线性查找精确匹配（处理重复值）
-            for (let i = left; i < sortedArr.length; i++) {
-                if (sortedArr[i] === value) {
-                    sortedArr.splice(i, 1);
-                    return;
-                }
-            }
-        };
-
-        for (let i = 0; i < n; i++) {
-            const current = closes[i];
-            insertSorted(sortedWindow, current);
-
-            if (sortedWindow.length > window) {
-                removeValue(sortedWindow, closes[i - window]);
-            }
-
-            const rank = percentileRankInSorted(sortedWindow, current);
-            this.data[i][key] = (rank / sortedWindow.length) * 100;
-        }
-
-        this.computedWindows.add(String(window));
+        VIXDashboardCore.computeRollingPercentile(this.data, this.closes, window);
     }
 
     getPercentileKey() {
@@ -421,13 +309,8 @@ class VIXDashboard {
 
     getPercentileLabel() {
         const type = document.getElementById('percentileSelect').value;
-        switch (type) {
-            case 'full': return '全历史百分位';
-            case '252': return '滚动 1 年百分位';
-            case '1260': return '滚动 5 年百分位';
-            case '2520': return '滚动 10 年百分位';
-            default: return '历史百分位';
-        }
+        const window = VIXDashboardCore.PERCENTILE_WINDOWS.find(w => String(w.value) === type);
+        return window ? window.label : '历史百分位';
     }
 
     updateStats() {
@@ -459,7 +342,21 @@ class VIXDashboard {
         const chartType = document.getElementById('chartType').value;
         const dates = this.dates;
         const closes = this.closes;
+        const ohlc = this.ohlc;
+        const flatDots = this.flatDots;
         const percentiles = this.data.map(d => d[percentileKey]);
+
+        const currentOption = this.chart.getOption() || {};
+        const currentDataZoom = currentOption.dataZoom && currentOption.dataZoom[0];
+        const zoomState = currentDataZoom ? {
+            start: currentDataZoom.start !== undefined ? currentDataZoom.start : 0,
+            end: currentDataZoom.end !== undefined ? currentDataZoom.end : 100,
+            ...(currentDataZoom.startValue !== undefined ? {
+                startValue: currentDataZoom.startValue,
+                endValue: currentDataZoom.endValue
+            } : {})
+        } : { start: 0, end: 100 };
+
         const c = this.colors;
 
         const option = {
@@ -470,7 +367,7 @@ class VIXDashboard {
             },
             title: [
                 {
-                    text: 'VIX 历史收盘价',
+                    text: 'VIX 历史 K 线',
                     left: 'center',
                     top: '2%',
                     textStyle: {
@@ -505,12 +402,15 @@ class VIXDashboard {
                     color: c.textSecondary
                 },
                 formatter: (params) => {
-                    const date = params[0].axisValue;
-                    const close = params.find(p => p.seriesName === 'VIX 收盘价');
+                    const date = VIXDashboardCore.escapeHtml(params[0].axisValue);
+                    const candle = params.find(p => p.seriesName === 'VIX K线');
+                    const idx = candle ? candle.dataIndex : params[0].dataIndex;
+                    const d = this.data[idx];
                     const pct = params.find(p => p.seriesName === percentileLabel);
                     let html = `<div style="font-weight:700;margin-bottom:6px;">${date}</div>`;
-                    if (close) {
-                        html += `<div style="color:${c.primary};">VIX 收盘价: <strong>${parseFloat(close.value).toFixed(2)}</strong></div>`;
+                    if (d) {
+                        const color = d.close >= d.open ? '#ef4444' : '#22c55e';
+                        html += `<div style="color:${color};">开: <strong>${d.open.toFixed(2)}</strong> 高: <strong>${d.high.toFixed(2)}</strong> 低: <strong>${d.low.toFixed(2)}</strong> 收: <strong>${d.close.toFixed(2)}</strong></div>`;
                     }
                     if (pct) {
                         html += `<div style="color:${c.secondary};">${percentileLabel}: <strong>${parseFloat(pct.value).toFixed(1)}%</strong></div>`;
@@ -520,7 +420,7 @@ class VIXDashboard {
             },
             legend: [
                 {
-                    data: ['VIX 收盘价'],
+                    data: ['VIX K线'],
                     top: '6%',
                     textStyle: { color: c.textMuted }
                 },
@@ -549,7 +449,7 @@ class VIXDashboard {
             xAxis: [
                 {
                     type: 'category',
-                    boundaryGap: false,
+                    boundaryGap: true,
                     data: dates,
                     gridIndex: 0,
                     axisLine: { lineStyle: { color: c.textSubtle } },
@@ -593,8 +493,7 @@ class VIXDashboard {
                 {
                     type: 'inside',
                     xAxisIndex: [0, 1],
-                    start: 0,
-                    end: 100,
+                    ...zoomState,
                     zoomOnMouseWheel: true,
                     moveOnMouseMove: true,
                     moveOnMouseWheel: true
@@ -602,8 +501,7 @@ class VIXDashboard {
                 {
                     type: 'slider',
                     xAxisIndex: [0, 1],
-                    start: 0,
-                    end: 100,
+                    ...zoomState,
                     bottom: '2%',
                     height: 24,
                     borderColor: c.border,
@@ -618,7 +516,7 @@ class VIXDashboard {
             ],
             visualMap: {
                 type: 'piecewise',
-                seriesIndex: 1,
+                seriesIndex: 2,
                 dimension: 1,
                 show: false,
                 pieces: this.getPercentilePieces().map(p => ({
@@ -630,43 +528,46 @@ class VIXDashboard {
             },
             series: [
                 {
-                    name: 'VIX 收盘价',
-                    type: 'line',
-                    data: closes,
+                    name: 'VIX K线',
+                    type: 'candlestick',
+                    data: ohlc,
                     xAxisIndex: 0,
                     yAxisIndex: 0,
-                    smooth: false,
-                    symbol: 'none',
-                    sampling: 'lttb',
                     progressive: 2000,
-                    lineStyle: { color: c.primary, width: 1.5 },
-                    itemStyle: { color: c.primary },
+                    itemStyle: {
+                        color: '#ef4444',
+                        color0: '#22c55e',
+                        borderColor: '#ef4444',
+                        borderColor0: '#22c55e'
+                    },
                     markLine: {
                         silent: true,
                         symbol: 'none',
                         data: [
                             {
-                                yAxis: VIX_MARK_LINE_LOW,
-                                label: { formatter: String(VIX_MARK_LINE_LOW), color: c.textMuted },
+                                yAxis: VIXDashboardCore.VIX_MARK_LINE_LOW,
+                                label: { formatter: String(VIXDashboardCore.VIX_MARK_LINE_LOW), color: c.textMuted },
                                 lineStyle: { color: c.textSubtle, type: 'dashed' }
                             },
                             {
-                                yAxis: VIX_MARK_LINE_HIGH,
-                                label: { formatter: String(VIX_MARK_LINE_HIGH), color: c.secondary },
+                                yAxis: VIXDashboardCore.VIX_MARK_LINE_HIGH,
+                                label: { formatter: String(VIXDashboardCore.VIX_MARK_LINE_HIGH), color: c.secondary },
                                 lineStyle: { color: c.secondary, type: 'dashed' }
                             }
                         ]
                     },
-                    markPoint: {
-                        data: [
-                            {
-                                type: 'max',
-                                name: '历史最高',
-                                label: { color: '#fff', formatter: '{c}' },
-                                itemStyle: { color: c.danger }
-                            }
-                        ]
-                    }
+                },
+                {
+                    name: 'VIX 平线',
+                    type: 'scatter',
+                    data: flatDots,
+                    xAxisIndex: 0,
+                    yAxisIndex: 0,
+                    symbol: 'circle',
+                    symbolSize: 3,
+                    itemStyle: { color: c.textMuted },
+                    tooltip: { show: false },
+                    emphasis: { scale: false }
                 },
                 {
                     name: percentileLabel,
@@ -683,7 +584,7 @@ class VIXDashboard {
                         symbol: 'none',
                         data: [
                             {
-                                yAxis: PERCENTILE_MARK_LINE_MEDIAN,
+                                yAxis: VIXDashboardCore.PERCENTILE_MARK_LINE_MEDIAN,
                                 label: { formatter: '50%', color: c.textMuted },
                                 lineStyle: { color: c.textSubtle, type: 'dashed' }
                             }
@@ -694,6 +595,63 @@ class VIXDashboard {
         };
 
         this.chart.setOption(option, true);
+        this.updateVisibleMaxMarkPoint();
+    }
+
+    updateVisibleMaxMarkPoint(eventBatch) {
+        if (!this.chart || this.data.length === 0) return;
+
+        let startIdx = 0;
+        let endIdx = this.data.length - 1;
+
+        if (eventBatch && eventBatch.startValue !== undefined && eventBatch.endValue !== undefined) {
+            startIdx = Math.floor(eventBatch.startValue);
+            endIdx = Math.ceil(eventBatch.endValue);
+        } else {
+            const option = this.chart.getOption() || {};
+            const dz = option.dataZoom && option.dataZoom[0];
+            if (dz) {
+                if (dz.startValue !== undefined && dz.endValue !== undefined) {
+                    startIdx = Math.floor(dz.startValue);
+                    endIdx = Math.ceil(dz.endValue);
+                } else if (dz.start !== undefined && dz.end !== undefined) {
+                    const n = this.data.length;
+                    startIdx = Math.floor(n * dz.start / 100);
+                    endIdx = Math.ceil(n * dz.end / 100) - 1;
+                }
+            }
+        }
+
+        startIdx = Math.max(0, Math.min(this.data.length - 1, startIdx));
+        endIdx = Math.max(0, Math.min(this.data.length - 1, endIdx));
+        if (startIdx > endIdx) {
+            [startIdx, endIdx] = [endIdx, startIdx];
+        }
+
+        let maxClose = -Infinity;
+        let maxIdx = startIdx;
+        for (let i = startIdx; i <= endIdx; i++) {
+            const v = this.closes[i];
+            if (v > maxClose) {
+                maxClose = v;
+                maxIdx = i;
+            }
+        }
+
+        this.chart.setOption({
+            series: [{
+                name: 'VIX K线',
+                markPoint: {
+                    data: [{
+                        name: '窗口最高',
+                        coord: [maxIdx, maxClose],
+                        value: maxClose,
+                        label: { color: '#fff', formatter: '{c}' },
+                        itemStyle: { color: this.colors.danger }
+                    }]
+                }
+            }]
+        });
     }
 
     hexToRgba(hex, alpha) {
@@ -706,7 +664,13 @@ class VIXDashboard {
     }
 }
 
-// Initialize dashboard when DOM is ready
-document.addEventListener('DOMContentLoaded', () => {
-    new VIXDashboard();
-});
+// Initialize dashboard when DOM is ready (browser only)
+if (typeof document !== 'undefined') {
+    document.addEventListener('DOMContentLoaded', () => {
+        new VIXDashboard();
+    });
+}
+
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports = { VIXDashboard };
+}

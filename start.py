@@ -12,7 +12,7 @@ import socketserver
 import sys
 from datetime import datetime, timezone
 from urllib.error import URLError
-from urllib.request import urlopen
+from urllib.request import Request, urlopen
 
 CBOE_VIX_URL = (
     "https://cdn.cboe.com/api/global/us_indices/daily_prices/VIX_History.csv"
@@ -72,7 +72,11 @@ def read_last_date(csv_path):
 
 def fetch_remote_csv(url):
     """从远程拉取 CSV 内容，返回字节串。"""
-    with urlopen(url, timeout=30) as response:
+    request = Request(
+        url,
+        headers={"User-Agent": "VIX-Dashboard/1.0 (local-dev)"},
+    )
+    with urlopen(request, timeout=30) as response:
         return response.read()
 
 
@@ -115,7 +119,7 @@ def update_vix_data():
 
     info = {
         "source": CBOE_VIX_URL,
-        "latestDate": remote_date.strftime("%m/%d/%Y"),
+        "latestDate": remote_date.isoformat(),
         "previousLatestDate": local_date.isoformat() if local_date else None,
     }
 
@@ -192,6 +196,11 @@ def main():
             port = int(sys.argv[1])
         except ValueError:
             print(f"[VIX Server] 端口参数无效，使用默认端口 {DEFAULT_PORT}")
+            port = DEFAULT_PORT
+
+    if not (1 <= port <= 65535):
+        print(f"[VIX Server] 端口必须在 1-65535 之间，使用默认端口 {DEFAULT_PORT}")
+        port = DEFAULT_PORT
 
     info = update_vix_data()
     try:
