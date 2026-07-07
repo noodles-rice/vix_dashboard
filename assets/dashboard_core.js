@@ -14,7 +14,6 @@ const PERCENTILE_WINDOWS = [
 
 const VIX_MARK_LINE_LOW = 20;
 const VIX_MARK_LINE_HIGH = 30;
-const PERCENTILE_MARK_LINE_MEDIAN = 50;
 
 // 百分位图按 VIX 经济含义区间在历史数据中的固定百分位边界划分。
 // VIX 经济含义阈值 13、20、30、40 在历史收盘价中的全历史百分位约为
@@ -209,7 +208,6 @@ const VIXDashboardCore = {
     PERCENTILE_WINDOWS,
     VIX_MARK_LINE_LOW,
     VIX_MARK_LINE_HIGH,
-    PERCENTILE_MARK_LINE_MEDIAN,
     PERCENTILE_PIECES,
     PERCENTILE_PIECE_BOUNDARIES,
     VIX_THRESHOLDS,

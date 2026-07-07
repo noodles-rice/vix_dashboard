@@ -122,6 +122,10 @@ function testVIXThresholdsStructure() {
     assert.strictEqual(core.VIX_THRESHOLDS[core.VIX_THRESHOLDS.length - 1].max, Infinity);
 }
 
+function testPercentilePieceBoundaries() {
+    assert.deepStrictEqual(core.PERCENTILE_PIECE_BOUNDARIES, [0, 17, 63, 92, 98, 100]);
+}
+
 function testGetVIXRegime() {
     assert.strictEqual(core.getVIXRegime(10).label, '恐慌缺失');
     assert.strictEqual(core.getVIXRegime(13).label, '低波动常态');
@@ -152,6 +156,7 @@ function runTests() {
         testComputeRollingPercentileWithDuplicates,
         testPercentileWindows,
         testVIXThresholdsStructure,
+        testPercentilePieceBoundaries,
         testGetVIXRegime,
         testGetVIXRegimeInvalidInputs,
     ];

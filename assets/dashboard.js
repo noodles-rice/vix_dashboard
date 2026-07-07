@@ -806,7 +806,9 @@ class VIXDashboard {
                             color: c.textMuted
                         },
                         lineStyle: { color: c.border, type: 'dashed' },
-                        data: VIXDashboardCore.PERCENTILE_PIECE_BOUNDARIES.map(value => ({ yAxis: value }))
+                        data: VIXDashboardCore.PERCENTILE_PIECE_BOUNDARIES
+                            .filter(value => value > 0 && value < 100)
+                            .map(value => ({ yAxis: value }))
                     }
                 },
                 {
