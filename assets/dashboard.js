@@ -689,8 +689,9 @@ class VIXDashboard {
                     min: 0,
                     max: PERCENTILE_AXIS_MAX,
                     axisLine: { show: true, lineStyle: { color: c.secondary } },
-                    axisLabel: { color: c.textMuted, formatter: '{value}%' },
-                    splitLine: { lineStyle: { color: c.border, type: 'dashed' } },
+                    axisTick: { show: false },
+                    axisLabel: { show: false },
+                    splitLine: { show: false },
                     nameTextStyle: { color: c.secondary }
                 },
                 {
@@ -799,13 +800,13 @@ class VIXDashboard {
                     markLine: {
                         silent: true,
                         symbol: 'none',
-                        data: [
-                            {
-                                yAxis: VIXDashboardCore.PERCENTILE_MARK_LINE_MEDIAN,
-                                label: { formatter: '50%', color: c.textMuted },
-                                lineStyle: { color: c.textSubtle, type: 'dashed' }
-                            }
-                        ]
+                        label: {
+                            position: 'start',
+                            formatter: params => params.value + '%',
+                            color: c.textMuted
+                        },
+                        lineStyle: { color: c.border, type: 'dashed' },
+                        data: VIXDashboardCore.PERCENTILE_PIECE_BOUNDARIES.map(value => ({ yAxis: value }))
                     }
                 },
                 {

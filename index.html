@@ -8,7 +8,7 @@
     <meta http-equiv="Expires" content="0">
     <title>VIX 历史数据看板</title>
     <script src="assets/echarts.min.js"></script>
-    <script src="assets/dashboard_core.js?v=3"></script>
+    <script src="assets/dashboard_core.js?v=5"></script>
     <link rel="stylesheet" href="assets/style.css?v=12">
 </head>
 <body>
@@ -58,7 +58,7 @@
         <div class="thresholds" id="thresholds">
             <h3>VIX 经济含义区间参考</h3>
             <div class="threshold-table" id="thresholdTable"></div>
-            <p class="threshold-note">阈值基于市场长期交易经验（13、20、30、40 为常见心理关口），用于快速判断当前市场恐慌程度，非统计分位数。</p>
+            <p class="threshold-note">VIX 经济含义阈值（13、20、30、40）基于市场长期交易经验；中间百分位图的五色区间按这些阈值在历史数据中的固定百分位位置（约 17%、63%、92%、98%，已四舍五入取整）划分，用于快速判断当前市场恐慌程度。</p>
         </div>
 
         <div class="controls">
@@ -99,6 +99,6 @@
         </div>
     </div>
 
-    <script src="assets/dashboard.js?v=19"></script>
+    <script src="assets/dashboard.js?v=21"></script>
 </body>
 </html>

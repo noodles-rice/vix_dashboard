@@ -16,14 +16,20 @@ const VIX_MARK_LINE_LOW = 20;
 const VIX_MARK_LINE_HIGH = 30;
 const PERCENTILE_MARK_LINE_MEDIAN = 50;
 
-// 0-100% 按 20% 一档离散着色，从绿到红；左闭右开，最后一个区间闭合
+// 百分位图按 VIX 经济含义区间在历史数据中的固定百分位边界划分。
+// VIX 经济含义阈值 13、20、30、40 在历史收盘价中的全历史百分位约为
+// 17%、63%、92%、98%，四舍五入取整后据此把百分位图从左到右划分为
+// 5 个具有经济含义的区段；区间左闭右开，最后一个区间闭合。
 const PERCENTILE_PIECES = [
-    { min: 0, max: 20, maxOpen: true, color: '#22c55e', label: '极低' },
-    { min: 20, max: 40, maxOpen: true, color: '#84cc16', label: '偏低' },
-    { min: 40, max: 60, maxOpen: true, color: '#eab308', label: '中等' },
-    { min: 60, max: 80, maxOpen: true, color: '#f97316', label: '偏高' },
-    { min: 80, max: 100, color: '#ef4444', label: '极高' }
+    { min: 0, max: 17, maxOpen: true, color: '#22c55e', label: '恐慌缺失' },
+    { min: 17, max: 63, maxOpen: true, color: '#84cc16', label: '低波动常态' },
+    { min: 63, max: 92, maxOpen: true, color: '#eab308', label: '市场担忧' },
+    { min: 92, max: 98, maxOpen: true, color: '#f97316', label: '显著恐慌' },
+    { min: 98, max: 100, color: '#ef4444', label: '极端危机' }
 ];
+
+// 百分位图纵轴刻度与分隔线位置，取各区间端点
+const PERCENTILE_PIECE_BOUNDARIES = [0, ...PERCENTILE_PIECES.map(p => p.max)];
 
 /**
  * VIX 经济含义区间阈值。
@@ -205,6 +211,7 @@ const VIXDashboardCore = {
     VIX_MARK_LINE_HIGH,
     PERCENTILE_MARK_LINE_MEDIAN,
     PERCENTILE_PIECES,
+    PERCENTILE_PIECE_BOUNDARIES,
     VIX_THRESHOLDS,
     getVIXRegime,
     escapeHtml,
