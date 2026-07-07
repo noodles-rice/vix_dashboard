@@ -18,30 +18,6 @@
             <p class="subtitle">CBOE 官方数据 · 可滑动缩放 · 实时历史百分位</p>
         </header>
 
-        <div class="controls">
-            <div class="control-group">
-                <label for="percentileSelect">百分位类型</label>
-                <select id="percentileSelect"></select>
-            </div>
-            <div class="control-group">
-                <label for="chartType">百分位显示</label>
-                <select id="chartType">
-                    <option value="line">折线</option>
-                    <option value="area">面积图</option>
-                </select>
-            </div>
-            <div class="control-group">
-                <label for="ndxScale">纳斯达克100 纵轴</label>
-                <select id="ndxScale">
-                    <option value="linear">普通坐标</option>
-                    <option value="log">对数坐标</option>
-                </select>
-            </div>
-            <div class="control-group">
-                <button id="resetZoom">重置缩放</button>
-            </div>
-        </div>
-
         <div class="stats" id="stats">
             <div class="stat-card">
                 <div class="stat-label">最新 VIX</div>
@@ -83,6 +59,30 @@
             <h3>VIX 经济含义区间参考</h3>
             <div class="threshold-table" id="thresholdTable"></div>
             <p class="threshold-note">阈值基于市场长期交易经验（13、20、30、40 为常见心理关口），用于快速判断当前市场恐慌程度，非统计分位数。</p>
+        </div>
+
+        <div class="controls">
+            <div class="control-group">
+                <label for="percentileSelect">百分位类型</label>
+                <select id="percentileSelect"></select>
+            </div>
+            <div class="control-group">
+                <label for="chartType">百分位显示</label>
+                <select id="chartType">
+                    <option value="line">折线</option>
+                    <option value="area">面积图</option>
+                </select>
+            </div>
+            <div class="control-group">
+                <label for="ndxScale">纳斯达克100 纵轴</label>
+                <select id="ndxScale">
+                    <option value="linear">普通坐标</option>
+                    <option value="log">对数坐标</option>
+                </select>
+            </div>
+            <div class="control-group">
+                <button id="resetZoom">重置缩放</button>
+            </div>
         </div>
 
         <div id="chart" class="chart" aria-label="VIX 历史 K 线、历史百分位与纳斯达克100 K 线图表，可使用鼠标滚轮缩放、拖动平移"></div>

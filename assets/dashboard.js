@@ -1,3 +1,18 @@
+// 三图布局常量（基于容器高度的百分比）
+const CHART_TITLE_TOP_PCT = 1;
+const CHART_GRID_TOP_PCT = 5;
+const CHART_GRID_HEIGHT_PCT = 26;
+const CHART_SECTION_GAP_PCT = 1;
+
+const CHART_LAYOUT = (() => {
+    const stride = CHART_GRID_TOP_PCT + CHART_GRID_HEIGHT_PCT + CHART_SECTION_GAP_PCT - CHART_TITLE_TOP_PCT;
+    return {
+        titleTops: [0, 1, 2].map(i => `${CHART_TITLE_TOP_PCT + i * stride}%`),
+        gridTops: [0, 1, 2].map(i => `${CHART_GRID_TOP_PCT + i * stride}%`),
+        gridHeight: `${CHART_GRID_HEIGHT_PCT}%`
+    };
+})();
+
 class VIXDashboard {
     constructor() {
         this.data = [];
@@ -515,7 +530,7 @@ class VIXDashboard {
                 {
                     text: 'VIX 历史 K 线',
                     left: 'center',
-                    top: '1%',
+                    top: CHART_LAYOUT.titleTops[0],
                     textStyle: {
                         color: c.textPrimary,
                         fontSize: 15,
@@ -525,7 +540,7 @@ class VIXDashboard {
                 {
                     text: percentileLabel,
                     left: 'center',
-                    top: '46%',
+                    top: CHART_LAYOUT.titleTops[1],
                     textStyle: {
                         color: c.textPrimary,
                         fontSize: 15,
@@ -535,7 +550,7 @@ class VIXDashboard {
                 {
                     text: 'NASDAQ-100 历史 K 线',
                     left: 'center',
-                    top: '71%',
+                    top: CHART_LAYOUT.titleTops[2],
                     textStyle: {
                         color: c.textPrimary,
                         fontSize: 15,
@@ -584,22 +599,22 @@ class VIXDashboard {
                 {
                     left: '3%',
                     right: '4%',
-                    top: '6%',
-                    height: '36%',
+                    top: CHART_LAYOUT.gridTops[0],
+                    height: CHART_LAYOUT.gridHeight,
                     containLabel: true
                 },
                 {
                     left: '3%',
                     right: '4%',
-                    top: '48%',
-                    height: '20%',
+                    top: CHART_LAYOUT.gridTops[1],
+                    height: CHART_LAYOUT.gridHeight,
                     containLabel: true
                 },
                 {
                     left: '3%',
                     right: '4%',
-                    top: '74%',
-                    height: '20%',
+                    top: CHART_LAYOUT.gridTops[2],
+                    height: CHART_LAYOUT.gridHeight,
                     containLabel: true
                 }
             ],
