@@ -24,7 +24,7 @@ class VIXDashboard {
         this.ndxOhlc = [];
         this.ndxFlatDots = [];
         this.ndxError = null;
-        this.ndxLogScale = false;
+        this.ndxLogScale = true;
         this.chart = null;
         this.computedWindows = new Set(['full']);
         this.resizeHandler = null;
