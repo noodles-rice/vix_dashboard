@@ -9,6 +9,7 @@ const GRID_LEFT_MARGIN = 80;
 const ZOOM_DEBOUNCE_MS = 80;
 const VIX_AXIS_MAX = 100;
 const PERCENTILE_AXIS_MAX = 100;
+const NDX_LOG_AXIS_PADDING = 1.05;
 
 const CHART_LAYOUT = (() => {
     const stride = CHART_GRID_TOP_PCT + CHART_GRID_HEIGHT_PCT + CHART_SECTION_GAP_PCT - CHART_TITLE_TOP_PCT;
@@ -30,6 +31,7 @@ class VIXDashboard {
         this.ndxOhlc = [];
         this.ndxFlatDots = [];
         this.ndxError = null;
+        this.ndxLogScale = true;
         this.chart = null;
         this.computedWindows = new Set(['full']);
         this.resizeHandler = null;
@@ -185,6 +187,11 @@ class VIXDashboard {
         });
 
         document.getElementById('chartType').addEventListener('change', () => {
+            this.updateChart();
+        });
+
+        document.getElementById('ndxScale').addEventListener('change', (e) => {
+            this.ndxLogScale = e.target.value === 'log';
             this.updateChart();
         });
 
@@ -564,11 +571,24 @@ class VIXDashboard {
                     }
                 }
             ],
+            axisPointer: {
+                link: [{ xAxisIndex: 'all' }],
+                lineStyle: {
+                    color: c.textSubtle,
+                    type: 'dashed'
+                },
+                label: {
+                    backgroundColor: c.surface
+                }
+            },
             tooltip: {
                 trigger: 'axis',
                 axisPointer: {
-                    type: 'cross',
-                    link: { xAxisIndex: 'all' },
+                    type: 'line',
+                    lineStyle: {
+                        color: c.textSubtle,
+                        type: 'dashed'
+                    },
                     label: {
                         backgroundColor: c.surface
                     }
@@ -674,14 +694,16 @@ class VIXDashboard {
                     nameTextStyle: { color: c.secondary }
                 },
                 {
-                    type: 'value',
+                    type: this.ndxLogScale ? 'log' : 'value',
                     name: 'NASDAQ-100',
                     gridIndex: 2,
                     position: 'left',
+                    scale: true,
                     axisLine: { show: true, lineStyle: { color: c.primary } },
                     axisLabel: { color: c.textMuted, formatter: value => Math.round(value).toString() },
                     splitLine: { lineStyle: { color: c.border, type: 'dashed' } },
-                    nameTextStyle: { color: c.primary }
+                    nameTextStyle: { color: c.primary },
+                    logBase: 10
                 }
             ],
             dataZoom: [
@@ -873,7 +895,7 @@ class VIXDashboard {
             }
         }
 
-        this.chart.setOption({
+        const updateOption = {
             series: [{
                 name: 'VIX K线',
                 markPoint: {
@@ -886,7 +908,31 @@ class VIXDashboard {
                     }]
                 }
             }]
-        });
+        };
+
+        // NDX 对数坐标：手动收紧纵轴范围
+        if (this.ndxLogScale) {
+            let ndxMin = Infinity;
+            let ndxMax = -Infinity;
+            for (let i = startIdx; i <= endIdx; i++) {
+                const candle = this.ndxOhlc[i];
+                if (!candle) continue;
+                const [, , low, high] = candle;
+                if (low < ndxMin) ndxMin = low;
+                if (high > ndxMax) ndxMax = high;
+            }
+            if (ndxMin > 0) {
+                updateOption.yAxis = [
+                    {},
+                    { min: 0, max: PERCENTILE_AXIS_MAX },
+                    { min: ndxMin / NDX_LOG_AXIS_PADDING, max: ndxMax * NDX_LOG_AXIS_PADDING }
+                ];
+            } else if (ndxMin !== Infinity) {
+                console.warn('NDX 可见区间存在非正价格，无法收紧对数纵轴:', ndxMin);
+            }
+        }
+
+        this.chart.setOption(updateOption);
     }
 
     hexToRgba(hex, alpha) {
