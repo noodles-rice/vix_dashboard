@@ -4,6 +4,12 @@ const CHART_GRID_TOP_PCT = 5;
 const CHART_GRID_HEIGHT_PCT = 26;
 const CHART_SECTION_GAP_PCT = 1;
 
+// 图表交互与坐标轴常量
+const GRID_LEFT_MARGIN = 80;
+const ZOOM_DEBOUNCE_MS = 80;
+const VIX_AXIS_MAX = 100;
+const PERCENTILE_AXIS_MAX = 100;
+
 const CHART_LAYOUT = (() => {
     const stride = CHART_GRID_TOP_PCT + CHART_GRID_HEIGHT_PCT + CHART_SECTION_GAP_PCT - CHART_TITLE_TOP_PCT;
     return {
@@ -24,10 +30,10 @@ class VIXDashboard {
         this.ndxOhlc = [];
         this.ndxFlatDots = [];
         this.ndxError = null;
-        this.ndxLogScale = true;
         this.chart = null;
         this.computedWindows = new Set(['full']);
         this.resizeHandler = null;
+        this.zoomUpdateTimer = null;
         this.colors = this.loadColors();
         this.init();
     }
@@ -157,6 +163,10 @@ class VIXDashboard {
         window.addEventListener('resize', this.resizeHandler);
 
         window.addEventListener('beforeunload', () => {
+            clearTimeout(this.zoomUpdateTimer);
+            if (this.resizeHandler) {
+                window.removeEventListener('resize', this.resizeHandler);
+            }
             if (this.chart) {
                 this.chart.dispose();
                 this.chart = null;
@@ -178,11 +188,6 @@ class VIXDashboard {
             this.updateChart();
         });
 
-        document.getElementById('ndxScale').addEventListener('change', (e) => {
-            this.ndxLogScale = e.target.value === 'log';
-            this.updateChart();
-        });
-
         document.getElementById('resetZoom').addEventListener('click', () => {
             this.chart.dispatchAction({
                 type: 'dataZoom',
@@ -192,8 +197,9 @@ class VIXDashboard {
         });
 
         this.chart.on('dataZoom', (params) => {
-            const batch = params.batch && params.batch[0];
-            if (batch) this.updateVisibleMaxMarkPoint(batch);
+            const batch = (params.batch && params.batch[0]) || params;
+            clearTimeout(this.zoomUpdateTimer);
+            this.zoomUpdateTimer = setTimeout(() => this.updateVisibleRanges(batch), ZOOM_DEBOUNCE_MS);
         });
     }
 
@@ -597,25 +603,22 @@ class VIXDashboard {
             },
             grid: [
                 {
-                    left: '3%',
+                    left: GRID_LEFT_MARGIN,
                     right: '4%',
                     top: CHART_LAYOUT.gridTops[0],
-                    height: CHART_LAYOUT.gridHeight,
-                    containLabel: true
+                    height: CHART_LAYOUT.gridHeight
                 },
                 {
-                    left: '3%',
+                    left: GRID_LEFT_MARGIN,
                     right: '4%',
                     top: CHART_LAYOUT.gridTops[1],
-                    height: CHART_LAYOUT.gridHeight,
-                    containLabel: true
+                    height: CHART_LAYOUT.gridHeight
                 },
                 {
-                    left: '3%',
+                    left: GRID_LEFT_MARGIN,
                     right: '4%',
                     top: CHART_LAYOUT.gridTops[2],
-                    height: CHART_LAYOUT.gridHeight,
-                    containLabel: true
+                    height: CHART_LAYOUT.gridHeight
                 }
             ],
             xAxis: [
@@ -630,7 +633,7 @@ class VIXDashboard {
                 },
                 {
                     type: 'category',
-                    boundaryGap: false,
+                    boundaryGap: true,
                     data: dates,
                     gridIndex: 1,
                     axisLine: { lineStyle: { color: c.textSubtle } },
@@ -651,6 +654,8 @@ class VIXDashboard {
                     name: 'VIX',
                     gridIndex: 0,
                     position: 'left',
+                    min: 0,
+                    max: VIX_AXIS_MAX,
                     axisLine: { show: true, lineStyle: { color: c.primary } },
                     axisLabel: { color: c.textMuted },
                     splitLine: { lineStyle: { color: c.border, type: 'dashed' } },
@@ -662,22 +667,21 @@ class VIXDashboard {
                     gridIndex: 1,
                     position: 'left',
                     min: 0,
-                    max: 100,
+                    max: PERCENTILE_AXIS_MAX,
                     axisLine: { show: true, lineStyle: { color: c.secondary } },
                     axisLabel: { color: c.textMuted, formatter: '{value}%' },
                     splitLine: { lineStyle: { color: c.border, type: 'dashed' } },
                     nameTextStyle: { color: c.secondary }
                 },
                 {
-                    type: this.ndxLogScale ? 'log' : 'value',
+                    type: 'value',
                     name: 'NASDAQ-100',
                     gridIndex: 2,
                     position: 'left',
                     axisLine: { show: true, lineStyle: { color: c.primary } },
-                    axisLabel: { color: c.textMuted },
+                    axisLabel: { color: c.textMuted, formatter: value => Math.round(value).toString() },
                     splitLine: { lineStyle: { color: c.border, type: 'dashed' } },
-                    nameTextStyle: { color: c.primary },
-                    logBase: 10
+                    nameTextStyle: { color: c.primary }
                 }
             ],
             dataZoom: [
@@ -788,7 +792,6 @@ class VIXDashboard {
                     data: ndxSeriesData,
                     xAxisIndex: 2,
                     yAxisIndex: 2,
-                    progressive: 2000,
                     itemStyle: {
                         color: '#ef4444',
                         color0: '#22c55e',
@@ -812,30 +815,44 @@ class VIXDashboard {
         };
 
         this.chart.setOption(option, true);
-        this.updateVisibleMaxMarkPoint();
+        this.updateVisibleRanges();
     }
 
-    updateVisibleMaxMarkPoint(eventBatch) {
+    updateVisibleRanges(eventBatch) {
         if (!this.chart || this.data.length === 0) return;
 
         let startIdx = 0;
         let endIdx = this.data.length - 1;
 
-        if (eventBatch && eventBatch.startValue !== undefined && eventBatch.endValue !== undefined) {
-            startIdx = Math.floor(eventBatch.startValue);
-            endIdx = Math.ceil(eventBatch.endValue);
-        } else {
+        const valueToIndex = (value) => {
+            if (typeof value === 'number') return Math.round(value);
+            if (typeof value === 'string') return this.dates.indexOf(value);
+            return -1;
+        };
+
+        const applyBatch = (batch) => {
+            if (!batch) return false;
+            const startValueIdx = valueToIndex(batch.startValue);
+            const endValueIdx = valueToIndex(batch.endValue);
+            if (startValueIdx >= 0 && endValueIdx >= 0) {
+                startIdx = Math.min(startValueIdx, endValueIdx);
+                endIdx = Math.max(startValueIdx, endValueIdx);
+                return true;
+            }
+            if (typeof batch.start === 'number' && typeof batch.end === 'number') {
+                const n = this.data.length;
+                startIdx = Math.floor(n * batch.start / 100);
+                endIdx = Math.ceil(n * batch.end / 100) - 1;
+                return true;
+            }
+            return false;
+        };
+
+        if (!eventBatch || !applyBatch(eventBatch)) {
             const option = this.chart.getOption() || {};
-            const dz = option.dataZoom && option.dataZoom[0];
-            if (dz) {
-                if (dz.startValue !== undefined && dz.endValue !== undefined) {
-                    startIdx = Math.floor(dz.startValue);
-                    endIdx = Math.ceil(dz.endValue);
-                } else if (dz.start !== undefined && dz.end !== undefined) {
-                    const n = this.data.length;
-                    startIdx = Math.floor(n * dz.start / 100);
-                    endIdx = Math.ceil(n * dz.end / 100) - 1;
-                }
+            const zooms = option.dataZoom || [];
+            for (const dz of zooms) {
+                if (applyBatch(dz)) break;
             }
         }
 
@@ -845,6 +862,7 @@ class VIXDashboard {
             [startIdx, endIdx] = [endIdx, startIdx];
         }
 
+        // VIX 窗口最高收盘价标记
         let maxClose = -Infinity;
         let maxIdx = startIdx;
         for (let i = startIdx; i <= endIdx; i++) {
