@@ -7,18 +7,28 @@
 | 文件 | 说明 |
 |---|---|
 | `data/VIX_History.csv` | CBOE 官方 VIX 日线数据（1990-01-02 至今） |
-| `data/last_update.json` | 数据更新时间与状态记录（由 `scripts/start.py` 维护） |
+| `data/NDX_History.csv` | Yahoo Finance 纳斯达克100指数（^NDX）日线数据（1985-10-01 至今） |
+| `data/last_update.json` | VIX 数据更新时间与状态记录（由 `scripts/start.py` 维护） |
+| `data/ndx_last_update.json` | 纳斯达克100 数据更新状态记录 |
 | `index.html` | 看板主页面 |
 | `assets/dashboard.js` | 图表逻辑、交互事件、更新时间展示 |
 | `assets/dashboard_core.js` | 可测试的纯函数核心：CSV 解析、日期解析、百分位计算 |
 | `assets/style.css` | 页面样式 |
-| `scripts/start.py` | 启动脚本：自动更新 VIX 数据并启动本地 HTTP 服务 |
+| `scripts/start.py` | 启动脚本：自动更新 VIX / 纳斯达克100 数据并启动本地 HTTP 服务 |
 | `tests/test_start.py` | `scripts/start.py` 的单元测试 |
 | `tests/test_dashboard_core.js` | `assets/dashboard_core.js` 的单元测试 |
 
 ## 启动方式
 
-由于浏览器安全策略，本地 CSV 文件需要通过 HTTP 服务器加载。本项目提供 `scripts/start.py` 启动脚本，在启动服务前会自动从 CBOE 拉取最新 VIX 数据并更新本地 CSV：
+由于浏览器安全策略，本地 CSV 文件需要通过 HTTP 服务器加载。本项目提供 `scripts/start.py` 启动脚本，在启动服务前会自动从 CBOE 拉取最新 VIX 数据、从 Yahoo Finance 拉取最新纳斯达克100数据，并更新本地 CSV：
+
+首次使用前请安装依赖：
+
+```bash
+pip install -r requirements.txt
+```
+
+然后运行：
 
 ```bash
 python3 scripts/start.py
@@ -37,15 +47,18 @@ http://localhost:8080
 ```
 
 > 注：若仅需手动启动 HTTP 服务而不更新数据，仍可运行 `python3 -m http.server 8080`，但看板上的“数据更新时间”将显示为“未记录”。
+>
+> 若未安装 `yfinance`，纳斯达克100 数据更新会被跳过，VIX 看板仍可正常使用。
 
 ## 功能
 
-- **双图布局**：上方为 VIX 历史 K 线，下方为对应历史百分位
-- **联动缩放/滑动**：两个图表共用同一个缩放与滑动条，鼠标滚轮、双指捏合、底部滑块均可控制
+- **三图布局**：上方为 VIX 历史 K 线，中间为对应历史百分位，下方为纳斯达克100（NASDAQ-100）历史 K 线
+- **联动缩放/滑动**：三个图表共用同一个缩放与滑动条，鼠标滚轮、双指捏合、底部滑块均可控制
+- **纳斯达克100 纵轴切换**：支持普通坐标与对数坐标，便于观察长期 exponential 增长
 - **历史百分位**：默认显示全历史百分位，可切换为滚动 1 年 / 5 年 / 10 年百分位
 - **百分位显示方式**：支持折线或面积图
 - **统计卡片**：展示最新日期、最新 VIX、最新百分位、历史最高/最低/均值、数据更新时间
-- **交互提示**：鼠标悬停同时显示对应日期的 VIX 开高低收与百分位
+- **交互提示**：鼠标悬停同时显示对应日期的 VIX 开高低收、百分位与纳斯达克100开高低收
 
 ## VIX 经济含义区间
 
@@ -63,5 +76,6 @@ http://localhost:8080
 
 ## 数据来源
 
-- CBOE 官方：`https://cdn.cboe.com/api/global/us_indices/daily_prices/VIX_History.csv`
+- VIX：CBOE 官方 `https://cdn.cboe.com/api/global/us_indices/daily_prices/VIX_History.csv`
+- 纳斯达克100：Yahoo Finance `^NDX`（通过 `yfinance` 拉取）
 - 数据字段：`DATE`, `OPEN`, `HIGH`, `LOW`, `CLOSE`

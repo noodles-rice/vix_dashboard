@@ -2,6 +2,14 @@
 __pycache__/
 *.py[cod]
 *$py.class
+.venv/
+
+# Node.js / local test artifacts
+node_modules/
+package-lock.json
+screenshot.png
 
 # Runtime generated update metadata
 data/last_update.json
+data/ndx_last_update.json
+data/NDX_History.csv

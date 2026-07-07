@@ -18,11 +18,14 @@ from urllib.request import Request, urlopen
 CBOE_VIX_URL = (
     "https://cdn.cboe.com/api/global/us_indices/daily_prices/VIX_History.csv"
 )
+YAHOO_NDX_SYMBOL = "^NDX"
 
 # 所有路径均基于脚本位置解析，确保无论从哪个目录启动行为一致
 BASE_DIR = Path(__file__).resolve().parent.parent
 LOCAL_CSV = str(BASE_DIR / "data" / "VIX_History.csv")
+LOCAL_NDX_CSV = str(BASE_DIR / "data" / "NDX_History.csv")
 UPDATE_INFO = str(BASE_DIR / "data" / "last_update.json")
+NDX_UPDATE_INFO = str(BASE_DIR / "data" / "ndx_last_update.json")
 DEFAULT_PORT = 8080
 
 
@@ -84,6 +87,79 @@ def fetch_remote_csv(url):
         return response.read()
 
 
+def update_csv_data(local_path, fetch_csv_text, source_name, log_prefix, append_mode=False):
+    """通用 CSV 数据更新逻辑。
+
+    Args:
+        local_path: 本地 CSV 文件路径。
+        fetch_csv_text: 返回 CSV 文本字符串的可调用对象。
+        source_name: 数据源名称，写入 info['source']。
+        log_prefix: 日志前缀，如 'VIX Updater'。
+        append_mode: 为 True 时仅追加新行；为 False 时全量覆盖。
+    """
+    local_date = read_last_date(local_path)
+    try:
+        csv_text = fetch_csv_text()
+    except Exception as e:
+        print(f"[{log_prefix}] 拉取数据异常: {e}", file=sys.stderr)
+        return {
+            "status": "fetch_error",
+            "message": f"拉取数据时发生异常: {e}",
+            "previousLatestDate": local_date.isoformat() if local_date else None,
+        }
+
+    remote_date = read_last_date_from_lines(csv_text.splitlines())
+
+    if remote_date is None:
+        return {
+            "status": "parse_error",
+            "message": "远程 CSV 解析失败，无法识别有效日期",
+            "previousLatestDate": local_date.isoformat() if local_date else None,
+        }
+
+    info = {
+        "source": source_name,
+        "latestDate": remote_date.isoformat(),
+        "previousLatestDate": local_date.isoformat() if local_date else None,
+    }
+
+    if local_date is None or remote_date > local_date:
+        os.makedirs(os.path.dirname(local_path), exist_ok=True)
+
+        if local_date is None:
+            with open(local_path, "w", encoding="utf-8", newline="") as f:
+                f.write(csv_text)
+            added_rows = len(csv_text.strip().splitlines()) - 1
+        elif append_mode:
+            added_rows = append_csv_rows_after(local_path, csv_text, local_date)
+        else:
+            with open(local_path, "w", encoding="utf-8", newline="") as f:
+                f.write(csv_text)
+            # 估算新增行数：远程文件中日期晚于本地日期的行数
+            added_rows = 0
+            for line in csv_text.splitlines():
+                cols = line.split(",")
+                if len(cols) < 2:
+                    continue
+                d = parse_csv_date(cols[0])
+                if d and d > local_date:
+                    added_rows += 1
+
+        info["status"] = "updated"
+        info["addedRows"] = added_rows
+        print(
+            f"[{log_prefix}] 已更新本地数据: {local_date} -> {remote_date}"
+            if local_date
+            else f"[{log_prefix}] 已初始化本地数据，最新日期: {remote_date}"
+        )
+    else:
+        info["status"] = "up_to_date"
+        info["addedRows"] = 0
+        print(f"[{log_prefix}] 本地数据已是最新（{remote_date}），无需更新")
+
+    return info
+
+
 def update_vix_data():
     """拉取并更新 VIX 数据，返回更新信息字典。"""
     local_date = read_last_date(LOCAL_CSV)
@@ -112,51 +188,155 @@ def update_vix_data():
     except UnicodeDecodeError:
         remote_text = raw.decode("utf-8", errors="replace")
 
-    remote_date = read_last_date_from_lines(remote_text.splitlines())
+    return update_csv_data(
+        LOCAL_CSV,
+        lambda: remote_text,
+        CBOE_VIX_URL,
+        "VIX Updater",
+        append_mode=False,
+    )
 
-    if remote_date is None:
+
+def fetch_ndx_history(start=None):
+    """通过 yfinance 拉取纳斯达克100指数 (^NDX) 日线 OHLC，返回 DataFrame。
+
+    Args:
+        start: 起始日期（date 或 datetime）。传入 None 时拉取全部历史数据。
+    """
+    import yfinance as yf
+
+    ticker = yf.Ticker(YAHOO_NDX_SYMBOL)
+    if start is not None:
+        df = ticker.history(start=start, auto_adjust=False)
+    else:
+        df = ticker.history(period="max", auto_adjust=False)
+    return df
+
+
+def ndx_dataframe_to_csv(df):
+    """将 yfinance DataFrame 转换为项目统一格式的 CSV 字符串。"""
+    import pandas as pd
+
+    dt = df.index.tz_convert("America/New_York") if df.index.tz else df.index
+    out = pd.DataFrame(
+        {
+            "DATE": dt.strftime("%m/%d/%Y"),
+            "OPEN": df["Open"].to_numpy(),
+            "HIGH": df["High"].to_numpy(),
+            "LOW": df["Low"].to_numpy(),
+            "CLOSE": df["Close"].to_numpy(),
+            "_sort": dt,
+        }
+    )
+    out = out.sort_values("_sort").drop(columns=["_sort"]).reset_index(drop=True)
+    return out.to_csv(index=False)
+
+
+def append_csv_rows_after(csv_path, new_csv_text, after_date):
+    """将 new_csv_text 中日期晚于 after_date 的行追加到 csv_path。
+
+    会跳过 new_csv_text 的表头，并保证追加前文件以换行符结尾。
+    返回实际追加的行数。
+    """
+    lines = new_csv_text.strip().splitlines()
+    if len(lines) <= 1:
+        return 0
+
+    new_rows = []
+    for line in lines[1:]:
+        cols = line.split(",")
+        if len(cols) < 2:
+            continue
+        d = parse_csv_date(cols[0])
+        if d and d > after_date:
+            new_rows.append(line)
+
+    if not new_rows:
+        return 0
+
+    needs_newline = False
+    if os.path.exists(csv_path) and os.path.getsize(csv_path) > 0:
+        with open(csv_path, "rb") as f:
+            f.seek(-1, os.SEEK_END)
+            if f.read(1) != b"\n":
+                needs_newline = True
+
+    with open(csv_path, "a", encoding="utf-8", newline="") as f:
+        if needs_newline:
+            f.write("\n")
+        f.write("\n".join(new_rows) + "\n")
+
+    return len(new_rows)
+
+
+def update_ndx_data():
+    """拉取并更新纳斯达克100数据，返回更新信息字典。"""
+    local_date = read_last_date(LOCAL_NDX_CSV)
+    # 若已有本地数据，从本地最后日期开始拉取，避免每次全量下载。
+    start = local_date if local_date else None
+
+    try:
+        print("[NDX Updater] 正在从 Yahoo Finance 拉取最新数据...")
+        df = fetch_ndx_history(start=start)
+    except ImportError as e:
+        print(
+            "[NDX Updater] 缺少 yfinance 依赖，请运行: pip install -r requirements.txt",
+            file=sys.stderr,
+        )
         return {
-            "status": "parse_error",
-            "message": "远程 CSV 解析失败，无法识别有效日期",
+            "status": "missing_dependency",
+            "message": f"缺少依赖: {e}",
+            "previousLatestDate": local_date.isoformat() if local_date else None,
+        }
+    except Exception as e:
+        print(f"[NDX Updater] 拉取数据异常: {e}", file=sys.stderr)
+        return {
+            "status": "fetch_error",
+            "message": f"拉取数据时发生异常: {e}",
             "previousLatestDate": local_date.isoformat() if local_date else None,
         }
 
-    info = {
-        "source": CBOE_VIX_URL,
-        "latestDate": remote_date.isoformat(),
-        "previousLatestDate": local_date.isoformat() if local_date else None,
-    }
-
-    if local_date is None or remote_date > local_date:
-        os.makedirs(os.path.dirname(LOCAL_CSV), exist_ok=True)
-        with open(LOCAL_CSV, "w", encoding="utf-8", newline="") as f:
-            f.write(remote_text)
-
-        added_rows = None
+    # 增量拉取时，本地最新日期之后可能暂无新数据（如当日未收盘、周末或节假日），
+    # 此时返回空 DataFrame 应视为已是最新，而不是获取失败。
+    if df.empty:
         if local_date is not None:
-            # 估算新增行数：远程文件中日期晚于本地日期的行数
-            added_rows = 0
-            for line in remote_text.splitlines():
-                cols = line.split(",")
-                if len(cols) < 2:
-                    continue
-                d = parse_csv_date(cols[0])
-                if d and d > local_date:
-                    added_rows += 1
+            print(
+                f"[NDX Updater] 未获取到新数据，本地数据已是最新（{local_date}）",
+                file=sys.stderr,
+            )
+            return {
+                "status": "up_to_date",
+                "source": f"Yahoo Finance ({YAHOO_NDX_SYMBOL})",
+                "latestDate": local_date.isoformat(),
+                "previousLatestDate": local_date.isoformat(),
+                "addedRows": 0,
+            }
+        return {
+            "status": "fetch_error",
+            "message": "yfinance 返回空数据",
+            "previousLatestDate": None,
+        }
 
-        info["status"] = "updated"
-        info["addedRows"] = added_rows
+    try:
+        csv_text = ndx_dataframe_to_csv(df)
+    except ImportError as e:
         print(
-            f"[VIX Updater] 已更新本地数据: {local_date} -> {remote_date}"
-            if local_date
-            else f"[VIX Updater] 已初始化本地数据，最新日期: {remote_date}"
+            "[NDX Updater] 缺少 pandas 依赖，请运行: pip install -r requirements.txt",
+            file=sys.stderr,
         )
-    else:
-        info["status"] = "up_to_date"
-        info["addedRows"] = 0
-        print(f"[VIX Updater] 本地数据已是最新（{remote_date}），无需更新")
+        return {
+            "status": "missing_dependency",
+            "message": f"缺少依赖: {e}",
+            "previousLatestDate": local_date.isoformat() if local_date else None,
+        }
 
-    return info
+    return update_csv_data(
+        LOCAL_NDX_CSV,
+        lambda: csv_text,
+        f"Yahoo Finance ({YAHOO_NDX_SYMBOL})",
+        "NDX Updater",
+        append_mode=True,
+    )
 
 
 def write_update_info(info):
@@ -169,6 +349,18 @@ def write_update_info(info):
     with open(UPDATE_INFO, "w", encoding="utf-8") as f:
         json.dump(record, f, ensure_ascii=False, indent=2)
     print(f"[VIX Updater] 更新时间已记录到 {UPDATE_INFO}")
+
+
+def write_ndx_update_info(info):
+    """将纳斯达克100更新信息写入 ndx_last_update.json。"""
+    record = {
+        "updatedAt": datetime.now(timezone.utc).isoformat(),
+        **info,
+    }
+    os.makedirs(os.path.dirname(NDX_UPDATE_INFO), exist_ok=True)
+    with open(NDX_UPDATE_INFO, "w", encoding="utf-8") as f:
+        json.dump(record, f, ensure_ascii=False, indent=2)
+    print(f"[NDX Updater] 更新时间已记录到 {NDX_UPDATE_INFO}")
 
 
 class CORSRequestHandler(http.server.SimpleHTTPRequestHandler):
@@ -219,6 +411,13 @@ def main():
         write_update_info(info)
     except OSError as e:
         print(f"[VIX Updater] 记录更新时间失败: {e}", file=sys.stderr)
+
+    ndx_info = update_ndx_data()
+    try:
+        write_ndx_update_info(ndx_info)
+    except OSError as e:
+        print(f"[NDX Updater] 记录更新时间失败: {e}", file=sys.stderr)
+
     run_server(port)
 
 

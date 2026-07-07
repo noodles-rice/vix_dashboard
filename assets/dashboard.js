@@ -5,6 +5,11 @@ class VIXDashboard {
         this.closes = [];
         this.ohlc = [];
         this.flatDots = [];
+        this.ndxData = [];
+        this.ndxOhlc = [];
+        this.ndxFlatDots = [];
+        this.ndxError = null;
+        this.ndxLogScale = false;
         this.chart = null;
         this.computedWindows = new Set(['full']);
         this.resizeHandler = null;
@@ -158,6 +163,11 @@ class VIXDashboard {
             this.updateChart();
         });
 
+        document.getElementById('ndxScale').addEventListener('change', (e) => {
+            this.ndxLogScale = e.target.value === 'log';
+            this.updateChart();
+        });
+
         document.getElementById('resetZoom').addEventListener('click', () => {
             this.chart.dispatchAction({
                 type: 'dataZoom',
@@ -173,26 +183,47 @@ class VIXDashboard {
     }
 
     async loadData() {
-        this.showLoading('正在加载 VIX 历史数据...');
+        this.showLoading('正在加载 VIX / 纳斯达克100 历史数据...');
         try {
-            const response = await fetch('data/VIX_History.csv');
-            if (!response.ok) {
-                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-            }
-            const text = await response.text();
+            const [vixResponse, ndxResponse] = await Promise.all([
+                fetch('data/VIX_History.csv'),
+                fetch('data/NDX_History.csv')
+            ]);
 
-            this.data = VIXDashboardCore.parseCSV(text);
+            if (!vixResponse.ok) {
+                throw new Error(`VIX HTTP ${vixResponse.status}: ${vixResponse.statusText}`);
+            }
+            const vixText = await vixResponse.text();
+
+            this.data = VIXDashboardCore.parseCSV(vixText);
             this.dates = this.data.map(d => d.dateStr);
             this.closes = this.data.map(d => d.close);
 
             if (this.data.length === 0) {
-                throw new Error('CSV 解析结果为空');
+                throw new Error('VIX CSV 解析结果为空');
             }
 
             this.ohlc = this.data.map(d => [d.open, d.close, d.low, d.high]);
             this.flatDots = this.data
                 .map((d, i) => (d.open === d.high && d.high === d.low && d.low === d.close) ? [i, d.close] : null)
                 .filter(p => p !== null);
+
+            if (ndxResponse.ok) {
+                try {
+                    const ndxText = await ndxResponse.text();
+                    this.ndxData = VIXDashboardCore.parseCSV(ndxText);
+                    this.alignNdxToVix();
+                    this.hideNdxWarning();
+                } catch (ndxErr) {
+                    console.warn('[VIX Dashboard] NDX parse failed:', ndxErr);
+                    this.ndxError = '纳斯达克100 数据解析失败：' + ndxErr.message;
+                    this.showNdxWarning(this.ndxError);
+                }
+            } else {
+                console.warn('[VIX Dashboard] NDX load failed:', ndxResponse.status);
+                this.ndxError = `纳斯达克100 数据加载失败：HTTP ${ndxResponse.status}`;
+                this.showNdxWarning(this.ndxError);
+            }
 
             this.hideLoading();
             this.showLoading('正在计算历史百分位...');
@@ -216,10 +247,49 @@ class VIXDashboard {
         }
     }
 
+    alignNdxToVix() {
+        const dateKey = d => d.date.toISOString().split('T')[0];
+        const map = new Map();
+        this.ndxData.forEach(d => {
+            map.set(dateKey(d), d);
+        });
+
+        this.ndxOhlc = this.data.map(d => {
+            const n = map.get(dateKey(d));
+            if (!n) return null;
+            return [n.open, n.close, n.low, n.high];
+        });
+
+        this.ndxFlatDots = this.data
+            .map((d, i) => {
+                const ndx = map.get(dateKey(d));
+                if (!ndx) return null;
+                if (ndx.open === ndx.high && ndx.high === ndx.low && ndx.low === ndx.close) {
+                    return [i, ndx.close];
+                }
+                return null;
+            })
+            .filter(p => p !== null);
+    }
+
     async loadUpdateInfo() {
-        const elem = document.getElementById('statUpdateTime');
+        await this.loadSingleUpdateInfo({
+            url: 'data/last_update.json',
+            elemId: 'statUpdateTime',
+            defaultSource: 'CBOE'
+        });
+        await this.loadSingleUpdateInfo({
+            url: 'data/ndx_last_update.json',
+            elemId: 'statNdxUpdateTime',
+            defaultSource: 'Yahoo Finance'
+        });
+    }
+
+    async loadSingleUpdateInfo({ url, elemId, defaultSource }) {
+        const elem = document.getElementById(elemId);
+        if (!elem) return;
         try {
-            const response = await fetch('data/last_update.json');
+            const response = await fetch(url);
             if (!response.ok) {
                 if (response.status === 404) {
                     elem.textContent = '未记录';
@@ -230,9 +300,9 @@ class VIXDashboard {
             const info = await response.json();
             const updatedAt = info.updatedAt ? this.formatDateTime(info.updatedAt) : '未知';
             elem.textContent = updatedAt;
-            elem.title = `数据源: ${info.source || 'CBOE'}\n最新数据日期: ${info.latestDate || '未知'}\n状态: ${this.translateStatus(info.status)}`;
+            elem.title = `数据源: ${info.source || defaultSource}\n最新数据日期: ${info.latestDate || '未知'}\n状态: ${this.translateStatus(info.status)}`;
         } catch (error) {
-            console.warn('[VIX Dashboard] Update info load failed:', error);
+            console.warn(`[VIX Dashboard] Update info load failed (${url}):`, error);
             elem.textContent = '未知';
         }
     }
@@ -326,6 +396,19 @@ class VIXDashboard {
         this.setOverlay(container);
     }
 
+    showNdxWarning(message) {
+        const elem = document.getElementById('ndx-warning');
+        if (!elem) return;
+        elem.textContent = message;
+        elem.style.display = 'block';
+    }
+
+    hideNdxWarning() {
+        const elem = document.getElementById('ndx-warning');
+        if (!elem) return;
+        elem.style.display = 'none';
+    }
+
     setOverlay(content) {
         const chartDom = document.getElementById('chart');
         this.clearOverlay();
@@ -382,7 +465,6 @@ class VIXDashboard {
 
         const percentilePiece = this.getPercentilePiece(percentile);
         const regime = VIXDashboardCore.getVIXRegime(last.close);
-        document.getElementById('statDate').textContent = last.dateStr;
         document.getElementById('statClose').textContent = last.close.toFixed(2);
         document.getElementById('statPercentile').textContent = percentile.toFixed(1) + '%' + (percentilePiece ? ' ' + percentilePiece.label : '');
         document.getElementById('statPercentile').style.color = percentilePiece ? percentilePiece.color : this.colors.textMuted;
@@ -406,6 +488,9 @@ class VIXDashboard {
         const ohlc = this.ohlc;
         const flatDots = this.flatDots;
         const percentiles = this.data.map(d => d[percentileKey]);
+        const ndxOhlc = this.ndxOhlc;
+        const ndxSeriesData = ndxOhlc.map(v => v === null ? '-' : v);
+        const ndxFlatDots = this.ndxFlatDots;
 
         const currentOption = this.chart.getOption() || {};
         const currentDataZoom = currentOption.dataZoom && currentOption.dataZoom[0];
@@ -430,7 +515,7 @@ class VIXDashboard {
                 {
                     text: 'VIX 历史 K 线',
                     left: 'center',
-                    top: '2%',
+                    top: '1%',
                     textStyle: {
                         color: c.textPrimary,
                         fontSize: 15,
@@ -440,7 +525,17 @@ class VIXDashboard {
                 {
                     text: percentileLabel,
                     left: 'center',
-                    top: '53%',
+                    top: '46%',
+                    textStyle: {
+                        color: c.textPrimary,
+                        fontSize: 15,
+                        fontWeight: 'normal'
+                    }
+                },
+                {
+                    text: 'NASDAQ-100 历史 K 线',
+                    left: 'center',
+                    top: '71%',
                     textStyle: {
                         color: c.textPrimary,
                         fontSize: 15,
@@ -468,13 +563,19 @@ class VIXDashboard {
                     const idx = candle ? candle.dataIndex : params[0].dataIndex;
                     const d = this.data[idx];
                     const pct = params.find(p => p.seriesName === percentileLabel);
+                    const ndxValues = this.ndxOhlc[idx];
                     let html = `<div style="font-weight:700;margin-bottom:6px;">${date}</div>`;
                     if (d) {
                         const color = d.close >= d.open ? '#ef4444' : '#22c55e';
-                        html += `<div style="color:${color};">开: <strong>${d.open.toFixed(2)}</strong> 高: <strong>${d.high.toFixed(2)}</strong> 低: <strong>${d.low.toFixed(2)}</strong> 收: <strong>${d.close.toFixed(2)}</strong></div>`;
+                        html += `<div style="color:${color};">VIX 开: <strong>${d.open.toFixed(2)}</strong> 高: <strong>${d.high.toFixed(2)}</strong> 低: <strong>${d.low.toFixed(2)}</strong> 收: <strong>${d.close.toFixed(2)}</strong></div>`;
                     }
                     if (pct) {
                         html += `<div style="color:${c.secondary};">${percentileLabel}: <strong>${parseFloat(pct.value).toFixed(1)}%</strong></div>`;
+                    }
+                    if (Array.isArray(ndxValues)) {
+                        const [o, cl, l, h] = ndxValues;
+                        const color = cl >= o ? '#ef4444' : '#22c55e';
+                        html += `<div style="color:${color};">NDX 开: <strong>${o.toFixed(2)}</strong> 高: <strong>${h.toFixed(2)}</strong> 低: <strong>${l.toFixed(2)}</strong> 收: <strong>${cl.toFixed(2)}</strong></div>`;
                     }
                     return html;
                 }
@@ -483,15 +584,22 @@ class VIXDashboard {
                 {
                     left: '3%',
                     right: '4%',
-                    top: '8%',
-                    height: '40%',
+                    top: '6%',
+                    height: '36%',
                     containLabel: true
                 },
                 {
                     left: '3%',
                     right: '4%',
-                    top: '59%',
-                    height: '29%',
+                    top: '48%',
+                    height: '20%',
+                    containLabel: true
+                },
+                {
+                    left: '3%',
+                    right: '4%',
+                    top: '74%',
+                    height: '20%',
                     containLabel: true
                 }
             ],
@@ -510,6 +618,14 @@ class VIXDashboard {
                     boundaryGap: false,
                     data: dates,
                     gridIndex: 1,
+                    axisLine: { lineStyle: { color: c.textSubtle } },
+                    axisLabel: { show: false }
+                },
+                {
+                    type: 'category',
+                    boundaryGap: true,
+                    data: dates,
+                    gridIndex: 2,
                     axisLine: { lineStyle: { color: c.textSubtle } },
                     axisLabel: { color: c.textMuted }
                 }
@@ -536,12 +652,23 @@ class VIXDashboard {
                     axisLabel: { color: c.textMuted, formatter: '{value}%' },
                     splitLine: { lineStyle: { color: c.border, type: 'dashed' } },
                     nameTextStyle: { color: c.secondary }
+                },
+                {
+                    type: this.ndxLogScale ? 'log' : 'value',
+                    name: 'NASDAQ-100',
+                    gridIndex: 2,
+                    position: 'left',
+                    axisLine: { show: true, lineStyle: { color: c.primary } },
+                    axisLabel: { color: c.textMuted },
+                    splitLine: { lineStyle: { color: c.border, type: 'dashed' } },
+                    nameTextStyle: { color: c.primary },
+                    logBase: 10
                 }
             ],
             dataZoom: [
                 {
                     type: 'inside',
-                    xAxisIndex: [0, 1],
+                    xAxisIndex: [0, 1, 2],
                     ...zoomState,
                     zoomOnMouseWheel: true,
                     moveOnMouseMove: true,
@@ -549,7 +676,7 @@ class VIXDashboard {
                 },
                 {
                     type: 'slider',
-                    xAxisIndex: [0, 1],
+                    xAxisIndex: [0, 1, 2],
                     ...zoomState,
                     bottom: '2%',
                     height: 24,
@@ -639,6 +766,32 @@ class VIXDashboard {
                             }
                         ]
                     }
+                },
+                {
+                    name: 'NASDAQ-100 K线',
+                    type: 'candlestick',
+                    data: ndxSeriesData,
+                    xAxisIndex: 2,
+                    yAxisIndex: 2,
+                    progressive: 2000,
+                    itemStyle: {
+                        color: '#ef4444',
+                        color0: '#22c55e',
+                        borderColor: '#ef4444',
+                        borderColor0: '#22c55e'
+                    }
+                },
+                {
+                    name: 'NASDAQ-100 平线',
+                    type: 'scatter',
+                    data: ndxFlatDots,
+                    xAxisIndex: 2,
+                    yAxisIndex: 2,
+                    symbol: 'circle',
+                    symbolSize: 3,
+                    itemStyle: { color: c.textMuted },
+                    tooltip: { show: false },
+                    emphasis: { scale: false }
                 }
             ]
         };

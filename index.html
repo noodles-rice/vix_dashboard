@@ -9,7 +9,7 @@
     <title>VIX 历史数据看板</title>
     <script src="assets/echarts.min.js"></script>
     <script src="assets/dashboard_core.js?v=3"></script>
-    <link rel="stylesheet" href="assets/style.css?v=10">
+    <link rel="stylesheet" href="assets/style.css?v=12">
 </head>
 <body>
     <div class="container">
@@ -31,15 +31,18 @@
                 </select>
             </div>
             <div class="control-group">
+                <label for="ndxScale">纳斯达克100 纵轴</label>
+                <select id="ndxScale">
+                    <option value="linear">普通坐标</option>
+                    <option value="log">对数坐标</option>
+                </select>
+            </div>
+            <div class="control-group">
                 <button id="resetZoom">重置缩放</button>
             </div>
         </div>
 
         <div class="stats" id="stats">
-            <div class="stat-card">
-                <div class="stat-label">最新日期</div>
-                <div class="stat-value" id="statDate">-</div>
-            </div>
             <div class="stat-card">
                 <div class="stat-label">最新 VIX</div>
                 <div class="stat-value" id="statClose">-</div>
@@ -65,10 +68,16 @@
                 <div class="stat-value" id="statMean">-</div>
             </div>
             <div class="stat-card">
-                <div class="stat-label">数据更新时间</div>
+                <div class="stat-label">VIX 更新时间</div>
                 <div class="stat-value" id="statUpdateTime">-</div>
             </div>
+            <div class="stat-card">
+                <div class="stat-label">NDX 更新时间</div>
+                <div class="stat-value" id="statNdxUpdateTime">-</div>
+            </div>
         </div>
+
+        <div id="ndx-warning" class="ndx-warning" style="display:none;"></div>
 
         <div class="thresholds" id="thresholds">
             <h3>VIX 经济含义区间参考</h3>
@@ -76,20 +85,20 @@
             <p class="threshold-note">阈值基于市场长期交易经验（13、20、30、40 为常见心理关口），用于快速判断当前市场恐慌程度，非统计分位数。</p>
         </div>
 
-        <div id="chart" class="chart" aria-label="VIX 历史 K 线与百分位图表，可使用鼠标滚轮缩放、拖动平移"></div>
+        <div id="chart" class="chart" aria-label="VIX 历史 K 线、历史百分位与纳斯达克100 K 线图表，可使用鼠标滚轮缩放、拖动平移"></div>
 
         <div class="info">
             <h3>使用说明</h3>
             <ul>
                 <li><strong>缩放：</strong>鼠标滚轮、双指捏合，或拖动底部滑块</li>
                 <li><strong>滑动：</strong>按住图表空白处左右拖动，或使用底部滑块</li>
-                <li><strong>双图布局：</strong>上方为 VIX 历史 K 线，下方为对应历史百分位，共享同一个缩放与滑动条</li>
+                <li><strong>三图布局：</strong>上方为 VIX 历史 K 线，中间为对应历史百分位，下方为纳斯达克100历史 K 线，三个图表共享同一个缩放与滑动条</li>
                 <li><strong>百分位：</strong>表示当前 VIX 收盘价在全历史数据中的位置（0-100%），基于日线收盘价计算；也可切换为滚动 1/5/10 年百分位</li>
-                <li><strong>数据来源：</strong>CBOE 官方 VIX_History.csv（1990-01-02 至今）</li>
+                <li><strong>数据来源：</strong>VIX 来自 CBOE 官方 VIX_History.csv；纳斯达克100 来自 Yahoo Finance ^NDX</li>
             </ul>
         </div>
     </div>
 
-    <script src="assets/dashboard.js?v=14"></script>
+    <script src="assets/dashboard.js?v=18"></script>
 </body>
 </html>
