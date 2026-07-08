@@ -19,13 +19,16 @@ CBOE_VIX_URL = (
     "https://cdn.cboe.com/api/global/us_indices/daily_prices/VIX_History.csv"
 )
 YAHOO_NDX_SYMBOL = "^NDX"
+YAHOO_SPX_SYMBOL = "^GSPC"
 
 # 所有路径均基于脚本位置解析，确保无论从哪个目录启动行为一致
 BASE_DIR = Path(__file__).resolve().parent.parent
 LOCAL_CSV = str(BASE_DIR / "data" / "VIX_History.csv")
 LOCAL_NDX_CSV = str(BASE_DIR / "data" / "NDX_History.csv")
+LOCAL_SPX_CSV = str(BASE_DIR / "data" / "SPX_History.csv")
 UPDATE_INFO = str(BASE_DIR / "data" / "last_update.json")
 NDX_UPDATE_INFO = str(BASE_DIR / "data" / "ndx_last_update.json")
+SPX_UPDATE_INFO = str(BASE_DIR / "data" / "spx_last_update.json")
 DEFAULT_PORT = 8080
 
 
@@ -197,15 +200,16 @@ def update_vix_data():
     )
 
 
-def fetch_ndx_history(start=None):
-    """通过 yfinance 拉取纳斯达克100指数 (^NDX) 日线 OHLC，返回 DataFrame。
+def fetch_yahoo_history(symbol, start=None):
+    """通过 yfinance 拉取 Yahoo Finance 日线 OHLC，返回 DataFrame。
 
     Args:
+        symbol: Yahoo Finance 代码，例如 ^NDX 或 ^GSPC。
         start: 起始日期（date 或 datetime）。传入 None 时拉取全部历史数据。
     """
     import yfinance as yf
 
-    ticker = yf.Ticker(YAHOO_NDX_SYMBOL)
+    ticker = yf.Ticker(symbol)
     if start is not None:
         df = ticker.history(start=start, auto_adjust=False)
     else:
@@ -213,7 +217,17 @@ def fetch_ndx_history(start=None):
     return df
 
 
-def ndx_dataframe_to_csv(df):
+def fetch_ndx_history(start=None):
+    """通过 yfinance 拉取纳斯达克100指数 (^NDX) 日线 OHLC，返回 DataFrame。"""
+    return fetch_yahoo_history(YAHOO_NDX_SYMBOL, start)
+
+
+def fetch_spx_history(start=None):
+    """通过 yfinance 拉取标普500指数 (^GSPC) 日线 OHLC，返回 DataFrame。"""
+    return fetch_yahoo_history(YAHOO_SPX_SYMBOL, start)
+
+
+def yahoo_dataframe_to_csv(df):
     """将 yfinance DataFrame 转换为项目统一格式的 CSV 字符串。"""
     import pandas as pd
 
@@ -269,27 +283,35 @@ def append_csv_rows_after(csv_path, new_csv_text, after_date):
     return len(new_rows)
 
 
-def update_ndx_data():
-    """拉取并更新纳斯达克100数据，返回更新信息字典。"""
-    local_date = read_last_date(LOCAL_NDX_CSV)
+def update_index_data(local_csv, symbol, fetch_history, log_prefix):
+    """通用指数数据更新逻辑（NDX / SPX）。
+
+    Args:
+        local_csv: 本地 CSV 文件路径。
+        symbol: Yahoo Finance 代码。
+        fetch_history: 接收 start 参数并返回 DataFrame 的可调用对象。
+        log_prefix: 日志前缀，如 'NDX Updater'。
+    """
+    local_date = read_last_date(local_csv)
     # 若已有本地数据，从本地最后日期开始拉取，避免每次全量下载。
     start = local_date if local_date else None
 
     try:
-        print("[NDX Updater] 正在从 Yahoo Finance 拉取最新数据...")
-        df = fetch_ndx_history(start=start)
+        print(f"[{log_prefix}] 正在从 Yahoo Finance 拉取最新数据...")
+        df = fetch_history(start=start)
     except ImportError as e:
         print(
-            "[NDX Updater] 缺少 yfinance 依赖，请运行: pip install -r requirements.txt",
+            f"[{log_prefix}] 缺少 yfinance 依赖，请运行: pip install -r requirements.txt",
             file=sys.stderr,
         )
         return {
             "status": "missing_dependency",
             "message": f"缺少依赖: {e}",
+            "source": f"Yahoo Finance ({symbol})",
             "previousLatestDate": local_date.isoformat() if local_date else None,
         }
     except Exception as e:
-        print(f"[NDX Updater] 拉取数据异常: {e}", file=sys.stderr)
+        print(f"[{log_prefix}] 拉取数据异常: {e}", file=sys.stderr)
         return {
             "status": "fetch_error",
             "message": f"拉取数据时发生异常: {e}",
@@ -301,12 +323,12 @@ def update_ndx_data():
     if df.empty:
         if local_date is not None:
             print(
-                f"[NDX Updater] 未获取到新数据，本地数据已是最新（{local_date}）",
+                f"[{log_prefix}] 未获取到新数据，本地数据已是最新（{local_date}）",
                 file=sys.stderr,
             )
             return {
                 "status": "up_to_date",
-                "source": f"Yahoo Finance ({YAHOO_NDX_SYMBOL})",
+                "source": f"Yahoo Finance ({symbol})",
                 "latestDate": local_date.isoformat(),
                 "previousLatestDate": local_date.isoformat(),
                 "addedRows": 0,
@@ -318,24 +340,39 @@ def update_ndx_data():
         }
 
     try:
-        csv_text = ndx_dataframe_to_csv(df)
+        csv_text = yahoo_dataframe_to_csv(df)
     except ImportError as e:
         print(
-            "[NDX Updater] 缺少 pandas 依赖，请运行: pip install -r requirements.txt",
+            f"[{log_prefix}] 缺少 pandas 依赖，请运行: pip install -r requirements.txt",
             file=sys.stderr,
         )
         return {
             "status": "missing_dependency",
             "message": f"缺少依赖: {e}",
+            "source": f"Yahoo Finance ({symbol})",
             "previousLatestDate": local_date.isoformat() if local_date else None,
         }
 
     return update_csv_data(
-        LOCAL_NDX_CSV,
+        local_csv,
         lambda: csv_text,
-        f"Yahoo Finance ({YAHOO_NDX_SYMBOL})",
-        "NDX Updater",
+        f"Yahoo Finance ({symbol})",
+        log_prefix,
         append_mode=True,
+    )
+
+
+def update_ndx_data():
+    """拉取并更新纳斯达克100数据，返回更新信息字典。"""
+    return update_index_data(
+        LOCAL_NDX_CSV, YAHOO_NDX_SYMBOL, fetch_ndx_history, "NDX Updater"
+    )
+
+
+def update_spx_data():
+    """拉取并更新标普500数据，返回更新信息字典。"""
+    return update_index_data(
+        LOCAL_SPX_CSV, YAHOO_SPX_SYMBOL, fetch_spx_history, "SPX Updater"
     )
 
 
@@ -361,6 +398,18 @@ def write_ndx_update_info(info):
     with open(NDX_UPDATE_INFO, "w", encoding="utf-8") as f:
         json.dump(record, f, ensure_ascii=False, indent=2)
     print(f"[NDX Updater] 更新时间已记录到 {NDX_UPDATE_INFO}")
+
+
+def write_spx_update_info(info):
+    """将标普500更新信息写入 spx_last_update.json。"""
+    record = {
+        "updatedAt": datetime.now(timezone.utc).isoformat(),
+        **info,
+    }
+    os.makedirs(os.path.dirname(SPX_UPDATE_INFO), exist_ok=True)
+    with open(SPX_UPDATE_INFO, "w", encoding="utf-8") as f:
+        json.dump(record, f, ensure_ascii=False, indent=2)
+    print(f"[SPX Updater] 更新时间已记录到 {SPX_UPDATE_INFO}")
 
 
 class CORSRequestHandler(http.server.SimpleHTTPRequestHandler):
@@ -417,6 +466,12 @@ def main():
         write_ndx_update_info(ndx_info)
     except OSError as e:
         print(f"[NDX Updater] 记录更新时间失败: {e}", file=sys.stderr)
+
+    spx_info = update_spx_data()
+    try:
+        write_spx_update_info(spx_info)
+    except OSError as e:
+        print(f"[SPX Updater] 记录更新时间失败: {e}", file=sys.stderr)
 
     run_server(port)
 

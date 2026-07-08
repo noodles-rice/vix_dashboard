@@ -127,6 +127,171 @@ class TestServerRoot(unittest.TestCase):
                 start.BASE_DIR = original_base_dir
 
 
+class TestUpdateSpxData(unittest.TestCase):
+    def _make_spx_df(self):
+        dates = pd.to_datetime(
+            ["2024-01-02", "2024-01-03", "2024-01-04"]
+        ).tz_localize("America/New_York")
+        return pd.DataFrame(
+            {
+                "Open": [4000.0, 4010.0, 4020.0],
+                "High": [4010.0, 4020.0, 4030.0],
+                "Low": [3990.0, 4000.0, 4010.0],
+                "Close": [4005.0, 4015.0, 4025.0],
+            },
+            index=dates,
+        )
+
+    def _write_csv(self, path, lines):
+        path.write_text("\n".join(lines), encoding="utf-8")
+
+    def test_updates_csv_when_remote_newer(self):
+        df = self._make_spx_df()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmpdir_path = Path(tmpdir)
+            spx_csv = tmpdir_path / "SPX_History.csv"
+            spx_info = tmpdir_path / "spx_last_update.json"
+            self._write_csv(
+                spx_csv,
+                [
+                    "DATE,OPEN,HIGH,LOW,CLOSE",
+                    "01/02/2024,4000.00,4010.00,3990.00,4005.00",
+                ],
+            )
+
+            original_csv = start.LOCAL_SPX_CSV
+            original_info = start.SPX_UPDATE_INFO
+            try:
+                start.LOCAL_SPX_CSV = str(spx_csv)
+                start.SPX_UPDATE_INFO = str(spx_info)
+                with patch.object(start, "fetch_spx_history", return_value=df):
+                    info = start.update_spx_data()
+            finally:
+                start.LOCAL_SPX_CSV = original_csv
+                start.SPX_UPDATE_INFO = original_info
+
+            self.assertEqual(info["status"], "updated")
+            self.assertEqual(info["latestDate"], "2024-01-04")
+            self.assertEqual(info["addedRows"], 2)
+            content = spx_csv.read_text(encoding="utf-8").splitlines()
+            self.assertEqual(content[0], "DATE,OPEN,HIGH,LOW,CLOSE")
+            self.assertEqual(content[1], "01/02/2024,4000.00,4010.00,3990.00,4005.00")
+            self.assertEqual(content[-1], "01/04/2024,4020.0,4030.0,4010.0,4025.0")
+
+    def test_up_to_date_when_remote_same(self):
+        df = self._make_spx_df()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmpdir_path = Path(tmpdir)
+            spx_csv = tmpdir_path / "SPX_History.csv"
+            spx_info = tmpdir_path / "spx_last_update.json"
+            self._write_csv(
+                spx_csv,
+                [
+                    "DATE,OPEN,HIGH,LOW,CLOSE",
+                    "01/02/2024,4000.00,4010.00,3990.00,4005.00",
+                    "01/03/2024,4010.00,4020.00,4000.00,4015.00",
+                    "01/04/2024,4020.00,4030.00,4010.00,4025.00",
+                ],
+            )
+
+            original_csv = start.LOCAL_SPX_CSV
+            original_info = start.SPX_UPDATE_INFO
+            try:
+                start.LOCAL_SPX_CSV = str(spx_csv)
+                start.SPX_UPDATE_INFO = str(spx_info)
+                with patch.object(start, "fetch_spx_history", return_value=df):
+                    info = start.update_spx_data()
+            finally:
+                start.LOCAL_SPX_CSV = original_csv
+                start.SPX_UPDATE_INFO = original_info
+
+            self.assertEqual(info["status"], "up_to_date")
+            self.assertEqual(info["addedRows"], 0)
+
+    def test_missing_dependency(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmpdir_path = Path(tmpdir)
+            spx_csv = tmpdir_path / "SPX_History.csv"
+            spx_info = tmpdir_path / "spx_last_update.json"
+
+            original_csv = start.LOCAL_SPX_CSV
+            original_info = start.SPX_UPDATE_INFO
+            try:
+                start.LOCAL_SPX_CSV = str(spx_csv)
+                start.SPX_UPDATE_INFO = str(spx_info)
+                with patch.object(
+                    start, "fetch_spx_history", side_effect=ImportError("No module named yfinance")
+                ):
+                    info = start.update_spx_data()
+            finally:
+                start.LOCAL_SPX_CSV = original_csv
+                start.SPX_UPDATE_INFO = original_info
+
+            self.assertEqual(info["status"], "missing_dependency")
+
+    def test_fetch_error(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmpdir_path = Path(tmpdir)
+            spx_csv = tmpdir_path / "SPX_History.csv"
+            spx_info = tmpdir_path / "spx_last_update.json"
+            self._write_csv(
+                spx_csv,
+                [
+                    "DATE,OPEN,HIGH,LOW,CLOSE",
+                    "01/04/2024,4020.00,4030.00,4010.00,4025.00",
+                ],
+            )
+
+            original_csv = start.LOCAL_SPX_CSV
+            original_info = start.SPX_UPDATE_INFO
+            try:
+                start.LOCAL_SPX_CSV = str(spx_csv)
+                start.SPX_UPDATE_INFO = str(spx_info)
+                with patch.object(
+                    start, "fetch_spx_history", side_effect=RuntimeError("connection timeout")
+                ):
+                    info = start.update_spx_data()
+            finally:
+                start.LOCAL_SPX_CSV = original_csv
+                start.SPX_UPDATE_INFO = original_info
+
+            self.assertEqual(info["status"], "fetch_error")
+            self.assertEqual(info["previousLatestDate"], "2024-01-04")
+
+    def test_up_to_date_when_remote_empty(self):
+        """增量拉取返回空 DataFrame 时，应视为已是最新而非获取失败。"""
+        empty_df = pd.DataFrame(
+            {"Open": [], "High": [], "Low": [], "Close": []},
+            index=pd.DatetimeIndex([], tz="America/New_York"),
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmpdir_path = Path(tmpdir)
+            spx_csv = tmpdir_path / "SPX_History.csv"
+            spx_info = tmpdir_path / "spx_last_update.json"
+            self._write_csv(
+                spx_csv,
+                [
+                    "DATE,OPEN,HIGH,LOW,CLOSE",
+                    "01/04/2024,4020.00,4030.00,4010.00,4025.00",
+                ],
+            )
+
+            original_csv = start.LOCAL_SPX_CSV
+            original_info = start.SPX_UPDATE_INFO
+            try:
+                start.LOCAL_SPX_CSV = str(spx_csv)
+                start.SPX_UPDATE_INFO = str(spx_info)
+                with patch.object(start, "fetch_spx_history", return_value=empty_df):
+                    info = start.update_spx_data()
+            finally:
+                start.LOCAL_SPX_CSV = original_csv
+                start.SPX_UPDATE_INFO = original_info
+
+            self.assertEqual(info["status"], "up_to_date")
+            self.assertEqual(info["latestDate"], "2024-01-04")
+            self.assertEqual(info["addedRows"], 0)
+
+
 class TestUpdateNdxData(unittest.TestCase):
     def _make_ndx_df(self):
         dates = pd.to_datetime(
