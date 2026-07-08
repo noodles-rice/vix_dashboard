@@ -421,6 +421,29 @@ function computeRollingPercentile(data, closes, window) {
     return data;
 }
 
+/**
+ * 根据已对齐的指数 OHLC 数组，预计算每个交易日对应的“前一日收盘价”。
+ *
+ * 数组元素为 [open, close, low, high] 或 null（缺失日）。
+ * 返回数组中第 i 项表示第 i 个交易日所对应的上一有效交易日的 close，
+ * 若不存在则返回 null。
+ */
+function buildPreviousCloseArray(ohlc) {
+    if (!Array.isArray(ohlc)) return [];
+    const prevCloses = [];
+    let lastClose = null;
+    for (let i = 0; i < ohlc.length; i++) {
+        const item = ohlc[i];
+        if (Array.isArray(item)) {
+            prevCloses.push(lastClose);
+            lastClose = item[1];
+        } else {
+            prevCloses.push(null);
+        }
+    }
+    return prevCloses;
+}
+
 const VIXDashboardCore = {
     PERCENTILE_WINDOWS,
     VIX_MARK_LINE_LOW,
@@ -438,7 +461,8 @@ const VIXDashboardCore = {
     parseCSV,
     lowerBound,
     computeFullPercentile,
-    computeRollingPercentile
+    computeRollingPercentile,
+    buildPreviousCloseArray
 };
 
 if (typeof module !== 'undefined' && module.exports) {

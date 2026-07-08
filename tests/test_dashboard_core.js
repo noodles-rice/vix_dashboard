@@ -211,6 +211,34 @@ function testGetVIXRegimeInvalidInputs() {
     assert.strictEqual(core.getVIXRegime('30'), null);
 }
 
+function testBuildPreviousCloseArray() {
+    const ohlc = [
+        [10, 11, 9, 12],
+        [11, 12, 10, 13],
+        [12, 10, 9, 13]
+    ];
+    const result = core.buildPreviousCloseArray(ohlc);
+    assert.deepStrictEqual(result, [null, 11, 12]);
+}
+
+function testBuildPreviousCloseArrayWithNulls() {
+    const ohlc = [
+        null,
+        [10, 11, 9, 12],
+        null,
+        [11, 13, 10, 14]
+    ];
+    const result = core.buildPreviousCloseArray(ohlc);
+    // 缺失日自身没有前收盘价；下一有效日的前收盘价仍为 11
+    assert.deepStrictEqual(result, [null, null, null, 11]);
+}
+
+function testBuildPreviousCloseArrayEmpty() {
+    assert.deepStrictEqual(core.buildPreviousCloseArray([]), []);
+    assert.deepStrictEqual(core.buildPreviousCloseArray(null), []);
+    assert.deepStrictEqual(core.buildPreviousCloseArray('invalid'), []);
+}
+
 function runTests() {
     const tests = [
         testEscapeHtml,
@@ -231,6 +259,9 @@ function runTests() {
         testVIXEventAnnotationsAgainstData,
         testGetVIXRegime,
         testGetVIXRegimeInvalidInputs,
+        testBuildPreviousCloseArray,
+        testBuildPreviousCloseArrayWithNulls,
+        testBuildPreviousCloseArrayEmpty,
     ];
 
     let passed = 0;

@@ -473,19 +473,23 @@ class VIXDashboard {
             })
             .filter(p => p !== null);
 
-        return { ohlc, flatDots };
+        const prevCloses = VIXDashboardCore.buildPreviousCloseArray(ohlc);
+
+        return { ohlc, flatDots, prevCloses };
     }
 
     alignNdxToVix() {
         const aligned = this.alignIndexToVix(this.ndxData);
         this.ndxOhlc = aligned.ohlc;
         this.ndxFlatDots = aligned.flatDots;
+        this.ndxPrevCloses = aligned.prevCloses;
     }
 
     alignSpxToVix() {
         const aligned = this.alignIndexToVix(this.spxData);
         this.spxOhlc = aligned.ohlc;
         this.spxFlatDots = aligned.flatDots;
+        this.spxPrevCloses = aligned.prevCloses;
     }
 
     computeEventAnnotations() {
@@ -872,6 +876,19 @@ class VIXDashboard {
                     const pct = params.find(p => p.seriesName === percentileLabel);
                     const ndxValues = this.ndxOhlc[idx];
                     const spxValues = this.spxOhlc[idx];
+
+                    const formatIndexLine = (values, prevClose, upColor, downColor, label) => {
+                        const [o, cl, l, h] = values;
+                        const color = prevClose !== null
+                            ? (cl >= prevClose ? upColor : downColor)
+                            : (cl >= o ? upColor : downColor);
+                        const changePct = prevClose !== null ? ((cl - prevClose) / prevClose) * 100 : null;
+                        const changeText = changePct !== null
+                            ? ` 涨跌幅: <strong>${changePct >= 0 ? '+' : ''}${changePct.toFixed(2)}%</strong>`
+                            : '';
+                        return `<div style="color:${color};">${label} 开: <strong>${o.toFixed(2)}</strong> 高: <strong>${h.toFixed(2)}</strong> 低: <strong>${l.toFixed(2)}</strong> 收: <strong>${cl.toFixed(2)}</strong>${changeText}</div>`;
+                    };
+
                     let html = `<div style="font-weight:700;margin-bottom:6px;">${date}</div>`;
                     if (d) {
                         const color = d.close >= d.open ? '#ef4444' : '#22c55e';
@@ -881,14 +898,12 @@ class VIXDashboard {
                         html += `<div style="color:${c.secondary};">${percentileLabel}: <strong>${parseFloat(pct.value).toFixed(1)}%</strong></div>`;
                     }
                     if (Array.isArray(ndxValues)) {
-                        const [o, cl, l, h] = ndxValues;
-                        const color = cl >= o ? '#ef4444' : '#22c55e';
-                        html += `<div style="color:${color};">NDX 开: <strong>${o.toFixed(2)}</strong> 高: <strong>${h.toFixed(2)}</strong> 低: <strong>${l.toFixed(2)}</strong> 收: <strong>${cl.toFixed(2)}</strong></div>`;
+                        const ndxPrevClose = this.ndxPrevCloses ? this.ndxPrevCloses[idx] : null;
+                        html += formatIndexLine(ndxValues, ndxPrevClose, '#ef4444', '#22c55e', 'NDX');
                     }
                     if (Array.isArray(spxValues)) {
-                        const [o, cl, l, h] = spxValues;
-                        const color = cl >= o ? SPX_UP_COLOR : SPX_DOWN_COLOR;
-                        html += `<div style="color:${color};">SPX 开: <strong>${o.toFixed(2)}</strong> 高: <strong>${h.toFixed(2)}</strong> 低: <strong>${l.toFixed(2)}</strong> 收: <strong>${cl.toFixed(2)}</strong></div>`;
+                        const spxPrevClose = this.spxPrevCloses ? this.spxPrevCloses[idx] : null;
+                        html += formatIndexLine(spxValues, spxPrevClose, SPX_UP_COLOR, SPX_DOWN_COLOR, 'SPX');
                     }
                     return html;
                 }
