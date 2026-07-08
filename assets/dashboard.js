@@ -11,9 +11,9 @@ const VIX_AXIS_MAX = 100;
 const PERCENTILE_AXIS_MAX = 100;
 const NDX_LOG_AXIS_PADDING = 1.05;
 
-// SPX K线配色（紫色系，与 NDX 的红绿实心区分）
-const SPX_UP_COLOR = '#a855f7';
-const SPX_DOWN_COLOR = '#c084fc';
+// SPX K线配色（橙/琥珀色系，与 NDX 红绿实心区分）
+const SPX_UP_COLOR = '#f97316';
+const SPX_DOWN_COLOR = '#fbbf24';
 
 const CHART_LAYOUT = (() => {
     const stride = CHART_GRID_TOP_PCT + CHART_GRID_HEIGHT_PCT + CHART_SECTION_GAP_PCT - CHART_TITLE_TOP_PCT;
@@ -984,10 +984,10 @@ class VIXDashboard {
                     gridIndex: 2,
                     position: 'right',
                     scale: true,
-                    axisLine: { show: true, lineStyle: { color: SPX_UP_COLOR } },
+                    axisLine: { show: true, lineStyle: { color: c.secondary } },
                     axisLabel: { color: c.textMuted, formatter: value => Math.round(value).toString() },
                     splitLine: { show: false },
-                    nameTextStyle: { color: SPX_UP_COLOR },
+                    nameTextStyle: { color: c.secondary },
                     logBase: 10
                 }
             ],
@@ -1127,11 +1127,11 @@ class VIXDashboard {
                     xAxisIndex: 2,
                     yAxisIndex: 3,
                     itemStyle: {
-                        color: 'rgba(168, 85, 247, 0.25)',
-                        color0: 'rgba(192, 132, 252, 0.25)',
+                        color: 'rgba(249, 115, 22, 0.25)',
+                        color0: 'rgba(251, 191, 36, 0.25)',
                         borderColor: SPX_UP_COLOR,
                         borderColor0: SPX_DOWN_COLOR,
-                        borderWidth: 1.5
+                        borderWidth: 1
                     }
                 },
                 {
