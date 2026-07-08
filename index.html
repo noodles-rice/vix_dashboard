@@ -9,7 +9,9 @@
     <title>VIX 历史数据看板</title>
     <script src="assets/echarts.min.js"></script>
     <script src="assets/dashboard_core.js?v=6"></script>
-    <link rel="stylesheet" href="assets/style.css?v=12">
+    <script src="assets/tiny-date-picker.min.js?v=1"></script>
+    <link rel="stylesheet" href="assets/tiny-date-picker.min.css?v=1">
+    <link rel="stylesheet" href="assets/style.css?v=13">
 </head>
 <body>
     <div class="container">
@@ -82,11 +84,11 @@
             </div>
             <div class="control-group">
                 <label for="startDate">起始日期</label>
-                <input type="date" id="startDate">
+                <input type="text" id="startDate" class="date-input" placeholder="YYYY-MM-DD" autocomplete="off" pattern="\d{4}-\d{2}-\d{2}" title="格式：YYYY-MM-DD，例如 2020-12-31">
             </div>
             <div class="control-group">
                 <label for="endDate">结束日期</label>
-                <input type="date" id="endDate">
+                <input type="text" id="endDate" class="date-input" placeholder="YYYY-MM-DD" autocomplete="off" pattern="\d{4}-\d{2}-\d{2}" title="格式：YYYY-MM-DD，例如 2020-12-31">
             </div>
             <div class="control-group">
                 <button id="resetZoom">重置缩放</button>

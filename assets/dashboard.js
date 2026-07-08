@@ -36,6 +36,8 @@ class VIXDashboard {
         this.computedWindows = new Set(['full']);
         this.resizeHandler = null;
         this.zoomUpdateTimer = null;
+        this.datePickers = {};
+        this.activeDateInputId = null;
         this.colors = this.loadColors();
         this.init();
     }
@@ -173,6 +175,9 @@ class VIXDashboard {
                 this.chart.dispose();
                 this.chart = null;
             }
+            Object.values(this.datePickers).forEach(dp => {
+                if (dp && typeof dp.destroy === 'function') dp.destroy();
+            });
         });
     }
 
@@ -201,7 +206,6 @@ class VIXDashboard {
                 start: 0,
                 end: 100
             });
-            this.initDateInputs();
         });
 
         document.getElementById('startDate').addEventListener('change', () => {
@@ -211,6 +215,24 @@ class VIXDashboard {
         document.getElementById('endDate').addEventListener('change', () => {
             this.applyDateRange();
         });
+
+        document.addEventListener('click', (e) => {
+            const todayBtn = e.target.closest('.dp-today');
+            if (!todayBtn) return;
+            if (!this.data.length) return;
+
+            const inputId = this.activeDateInputId;
+            if (!inputId || !this.datePickers[inputId]) return;
+
+            e.preventDefault();
+            e.stopPropagation();
+
+            const input = document.getElementById(inputId);
+            const latest = VIXDashboardCore.formatISODate(this.data[this.data.length - 1].date);
+            input.value = latest;
+            input.dispatchEvent(new Event('change', { bubbles: true }));
+            this.datePickers[inputId].close();
+        }, true);
 
         this.chart.on('dataZoom', (params) => {
             const batch = (params.batch && params.batch[0]) || params;
@@ -227,12 +249,68 @@ class VIXDashboard {
 
         const first = VIXDashboardCore.formatISODate(this.data[0].date);
         const last = VIXDashboardCore.formatISODate(this.data[this.data.length - 1].date);
-        startInput.min = first;
-        startInput.max = last;
-        endInput.min = first;
-        endInput.max = last;
         startInput.value = first;
         endInput.value = last;
+
+        [startInput, endInput].forEach(input => {
+            input.addEventListener('focus', () => {
+                this.activeDateInputId = input.id;
+            });
+            input.addEventListener('input', () => {
+                input.classList.remove('invalid');
+            });
+            input.addEventListener('blur', () => {
+                this.validateDateInput(input);
+            });
+        });
+
+        if (typeof TinyDatePicker === 'undefined') return;
+
+        // 注意：tiny-date-picker 目前没有内置 ARIA 支持，属于可访问性降级。
+        // 若未来需要满足高可访问性标准，应替换为带 ARIA 的日期选择组件。
+        const toLocalMidnight = (utcDate) => {
+            return new Date(utcDate.getUTCFullYear(), utcDate.getUTCMonth(), utcDate.getUTCDate());
+        };
+
+        const options = {
+            mode: 'dp-below',
+            lang: {
+                days: ['日', '一', '二', '三', '四', '五', '六'],
+                months: ['1月', '2月', '3月', '4月', '5月', '6月', '7月', '8月', '9月', '10月', '11月', '12月'],
+                today: '最新',
+                clear: '清除',
+                close: '关闭'
+            },
+            format(date) {
+                if (!date) return '';
+                const y = date.getFullYear();
+                const m = String(date.getMonth() + 1).padStart(2, '0');
+                const d = String(date.getDate()).padStart(2, '0');
+                return `${y}-${m}-${d}`;
+            },
+            parse(str) {
+                if (str instanceof Date) return str;
+                return VIXDashboardCore.parseISODate(str);
+            },
+            min: toLocalMidnight(this.data[0].date),
+            max: toLocalMidnight(this.data[this.data.length - 1].date)
+        };
+
+        if (this.datePickers.startDate) this.datePickers.startDate.destroy();
+        if (this.datePickers.endDate) this.datePickers.endDate.destroy();
+
+        this.datePickers.startDate = TinyDatePicker(startInput, options);
+        this.datePickers.endDate = TinyDatePicker(endInput, options);
+    }
+
+    validateDateInput(input) {
+        if (!input) return;
+        const value = input.value.trim();
+        if (!value || VIXDashboardCore.parseISODate(value)) {
+            input.classList.remove('invalid');
+        } else {
+            input.classList.add('invalid');
+        }
     }
 
     applyDateRange() {
