@@ -158,6 +158,41 @@ function testPercentilePieceBoundaries() {
     assert.deepStrictEqual(core.PERCENTILE_PIECE_BOUNDARIES, [0, 17, 63, 92, 98, 100]);
 }
 
+function testVIXEventAnnotations() {
+    assert.ok(Array.isArray(core.VIX_EVENT_ANNOTATIONS));
+    assert.ok(core.VIX_EVENT_ANNOTATIONS.length > 0);
+    core.VIX_EVENT_ANNOTATIONS.forEach(a => {
+        assert.ok(/^\d{4}-\d{2}-\d{2}$/.test(a.date), `日期格式错误: ${a.date}`);
+        assert.ok(typeof a.label === 'string' && a.label.length > 0, `标注文本为空: ${a.date}`);
+        assert.ok(typeof a.description === 'string' && a.description.length > 0, `事件描述为空: ${a.date}`);
+        assert.ok(typeof a.showLabel === 'boolean', `showLabel 应为布尔值: ${a.date}`);
+    });
+}
+
+function testVIXEventAnnotationsAgainstData() {
+    const fs = require('fs');
+    const path = require('path');
+    const csvPath = path.join(__dirname, '..', 'data', 'VIX_History.csv');
+    const csv = fs.readFileSync(csvPath, 'utf8');
+    const data = core.parseCSV(csv);
+    const dateToHigh = new Map();
+    data.forEach(d => {
+        dateToHigh.set(d.date.toISOString().split('T')[0], d.high);
+    });
+
+    core.VIX_EVENT_ANNOTATIONS.forEach(a => {
+        const high = dateToHigh.get(a.date);
+        assert.ok(high !== undefined, `标注日期不存在于 VIX_History.csv: ${a.date}`);
+        assert.ok(
+            high > core.VIX_EVENT_HIGH_THRESHOLD,
+            `${a.date} 的 VIX 最高价 ${high} 未超过阈值 ${core.VIX_EVENT_HIGH_THRESHOLD}`
+        );
+    });
+
+    const high35Days = data.filter(d => d.high > core.VIX_EVENT_HIGH_THRESHOLD).length;
+    assert.strictEqual(high35Days, 451, `VIX 最高价 > ${core.VIX_EVENT_HIGH_THRESHOLD} 的交易日数量应为 451`);
+}
+
 function testGetVIXRegime() {
     assert.strictEqual(core.getVIXRegime(10).label, '恐慌缺失');
     assert.strictEqual(core.getVIXRegime(13).label, '低波动常态');
@@ -192,6 +227,8 @@ function runTests() {
         testPercentileWindows,
         testVIXThresholdsStructure,
         testPercentilePieceBoundaries,
+        testVIXEventAnnotations,
+        testVIXEventAnnotationsAgainstData,
         testGetVIXRegime,
         testGetVIXRegimeInvalidInputs,
     ];

@@ -15,6 +15,196 @@ const PERCENTILE_WINDOWS = [
 const VIX_MARK_LINE_LOW = 20;
 const VIX_MARK_LINE_HIGH = 30;
 
+/**
+ * VIX 事件标注的日内最高价阈值。
+ * 当 VIX 最高价超过该值时，对应的交易日会被纳入事件标注范围。
+ */
+const VIX_EVENT_HIGH_THRESHOLD = 35;
+
+/**
+ * VIX 日内最高价 > VIX_EVENT_HIGH_THRESHOLD 的历史事件标注。
+ *
+ * 数据覆盖 1990–2026 年，共 451 个交易日 VIX 最高价突破该阈值。
+ * 此处按事件分组，取每组峰值日进行标注；主要事件显示文字标签，
+ * 次要事件仅显示标记点，悬停仍可查看详情，避免图表过度拥挤。
+ */
+const VIX_EVENT_ANNOTATIONS = [
+    {
+        date: '1990-08-23',
+        label: '海湾危机',
+        showLabel: true,
+        description: '伊拉克入侵科威特，海湾战争一触即发，油价飙升引发全球股市剧烈波动。'
+    },
+    {
+        date: '1991-01-14',
+        label: '海湾战争',
+        showLabel: true,
+        description: '联合国限期伊拉克撤军的前夕，“沙漠风暴”行动即将展开，市场高度紧张。'
+    },
+    {
+        date: '1997-10-28',
+        label: '亚洲金融危机',
+        showLabel: true,
+        description: '国际炒家攻击东南亚货币，港股暴跌并波及全球，恒生指数单日跌超 10%。'
+    },
+    {
+        date: '1998-10-08',
+        label: '俄罗斯违约 / LTCM',
+        showLabel: true,
+        description: '俄罗斯主权债务违约引发全球避险潮，高杠杆对冲基金 LTCM 濒临爆仓，美联储协调救助。'
+    },
+    {
+        date: '2001-03-22',
+        label: '互联网泡沫加速破裂',
+        showLabel: false,
+        description: '纳斯达克泡沫进入加速下跌阶段，科技股持续重挫，市场恐慌情绪升温。'
+    },
+    {
+        date: '2001-09-21',
+        label: '9/11 事件',
+        showLabel: true,
+        description: '美国遭遇恐怖袭击，美股停市四天后重开，航空、保险股暴跌，恐慌情绪达到顶峰。'
+    },
+    {
+        date: '2002-07-24',
+        label: '安然 / 世通丑闻',
+        showLabel: true,
+        description: '安然、世通等巨头财务造假曝光，投资者对公司财报和审计体系失去信心。'
+    },
+    {
+        date: '2003-02-10',
+        label: '伊拉克战争前紧张',
+        showLabel: true,
+        description: '伊拉克战争阴云笼罩，美欧分歧加剧，油价和地缘政治风险推升市场波动。'
+    },
+    {
+        date: '2007-08-16',
+        label: '次贷危机爆发',
+        showLabel: true,
+        description: '法国巴黎银行冻结旗下次贷基金，美国次贷违约潮浮出水面，信贷市场开始冻结。'
+    },
+    {
+        date: '2008-01-22',
+        label: '次贷危机恶化',
+        showLabel: false,
+        description: '全球信贷紧缩担忧加剧，主要央行紧急联手救市，市场对未来金融体系深感不安。'
+    },
+    {
+        date: '2008-03-17',
+        label: '贝尔斯登危机',
+        showLabel: true,
+        description: '华尔街投行贝尔斯登濒临破产，最终被摩根大通以极低价格收购，次贷危机全面升级。'
+    },
+    {
+        date: '2008-07-16',
+        label: '房利美房地美危机',
+        showLabel: true,
+        description: '美国两大房贷巨头房利美、房地美股价暴跌，政府救助方案出台前市场极度恐慌。'
+    },
+    {
+        date: '2008-10-24',
+        label: '全球金融危机',
+        showLabel: true,
+        description: '雷曼兄弟破产后信贷市场冻结，全球股市暴跌，VIX 当日盘中最高 89.53，为历史最高纪录。'
+    },
+    {
+        date: '2010-05-21',
+        label: '闪电崩盘 / 欧债',
+        showLabel: true,
+        description: '道指盘中瞬间暴跌近千点的“闪电崩盘”刚过去不久，叠加希腊债务危机引发欧元区解体担忧。'
+    },
+    {
+        date: '2011-08-08',
+        label: '美债降级 / 欧债危机',
+        showLabel: true,
+        description: '标普首次将美国主权信用评级从 AAA 下调至 AA+，同时欧债危机持续恶化。'
+    },
+    {
+        date: '2015-08-24',
+        label: '人民币贬值',
+        showLabel: true,
+        description: '中国央行引导人民币贬值，引发新兴市场货币和股市连锁抛售，全球风险资产遭遇重估。'
+    },
+    {
+        date: '2018-02-06',
+        label: 'Volmageddon',
+        showLabel: true,
+        description: '低波动率环境突然逆转，做空 VIX 的 ETN（XIV）被强制清盘，波动率空头踩踏引发“波动率末日”。'
+    },
+    {
+        date: '2018-12-26',
+        label: '圣诞暴跌',
+        showLabel: false,
+        description: '美联储缩表和加息预期引发年末流动性紧张，美股在圣诞前后出现剧烈调整。'
+    },
+    {
+        date: '2020-03-18',
+        label: '新冠疫情爆发',
+        showLabel: true,
+        description: 'WHO 宣布新冠全球大流行，欧美多国开始封城，股市在数周内急速崩盘，VIX 盘中突破 85。'
+    },
+    {
+        date: '2020-09-04',
+        label: '科技股回调',
+        showLabel: false,
+        description: '纳斯达克在高位出现快速回调，科技股估值与期权投机活动引发波动放大。'
+    },
+    {
+        date: '2020-10-29',
+        label: '美国大选 / 疫情',
+        showLabel: true,
+        description: '美国大选前政策不确定性高企，同时欧美疫情第三波爆发，市场波动显著放大。'
+    },
+    {
+        date: '2021-01-29',
+        label: 'GameStop 逼空',
+        showLabel: false,
+        description: '散户抱团逼空 GameStop 等股票，对冲基金被迫平仓，市场微观结构和波动率剧烈扰动。'
+    },
+    {
+        date: '2021-12-03',
+        label: 'Omicron 变异株',
+        showLabel: true,
+        description: '新冠 Omicron 变异株引发全球担忧，旅行限制和封控预期导致风险资产急跌。'
+    },
+    {
+        date: '2022-01-24',
+        label: '俄乌冲突 / 加息',
+        showLabel: true,
+        description: '俄乌边境紧张局势升级，同时美联储即将开启加息周期，地缘与货币政策双重压力。'
+    },
+    {
+        date: '2022-05-02',
+        label: '美联储加息 / 通胀',
+        showLabel: false,
+        description: '美国通胀高企，美联储开启激进加息，市场对经济增长和估值重估产生担忧。'
+    },
+    {
+        date: '2022-06-13',
+        label: '通胀 / 衰退担忧',
+        showLabel: false,
+        description: '美国 CPI 超预期爆表，市场担心美联储被迫更激进加息，经济衰退概率上升。'
+    },
+    {
+        date: '2024-08-05',
+        label: '日元套利平仓',
+        showLabel: true,
+        description: '日本央行意外加息，日元急升导致全球日元套利交易被迫平仓，日经指数单日大跌 12%。'
+    },
+    {
+        date: '2025-04-07',
+        label: '特朗普关税战',
+        showLabel: true,
+        description: '特朗普政府宣布对多国加征高额“对等关税”，引发全球贸易战和衰退担忧，市场剧烈波动。'
+    },
+    {
+        date: '2026-03-09',
+        label: '地缘 / 政策不确定性',
+        showLabel: false,
+        description: '特朗普关于国际局势的言论引发市场波动，叠加政策不确定性，风险资产短暂承压。'
+    }
+];
+
 // 百分位图按 VIX 经济含义区间在历史数据中的固定百分位边界划分。
 // VIX 经济含义阈值 13、20、30、40 在历史收盘价中的全历史百分位约为
 // 17%、63%、92%、98%，四舍五入取整后据此把百分位图从左到右划分为
@@ -235,6 +425,8 @@ const VIXDashboardCore = {
     PERCENTILE_WINDOWS,
     VIX_MARK_LINE_LOW,
     VIX_MARK_LINE_HIGH,
+    VIX_EVENT_HIGH_THRESHOLD,
+    VIX_EVENT_ANNOTATIONS,
     PERCENTILE_PIECES,
     PERCENTILE_PIECE_BOUNDARIES,
     VIX_THRESHOLDS,

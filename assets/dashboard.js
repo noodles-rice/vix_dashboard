@@ -34,6 +34,7 @@ class VIXDashboard {
         this.ndxLogScale = true;
         this.chart = null;
         this.computedWindows = new Set(['full']);
+        this.eventAnnotations = [];
         this.resizeHandler = null;
         this.zoomUpdateTimer = null;
         this.datePickers = {};
@@ -404,6 +405,7 @@ class VIXDashboard {
             requestAnimationFrame(() => {
                 setTimeout(() => {
                     try {
+                        this.computeEventAnnotations();
                         this.computeFullPercentile();
                         this.hideLoading();
                         this.updateStats();
@@ -444,6 +446,57 @@ class VIXDashboard {
                 return null;
             })
             .filter(p => p !== null);
+    }
+
+    computeEventAnnotations() {
+        this.eventAnnotations = [];
+        if (!this.data.length) return;
+
+        const dateToIndex = new Map();
+        this.data.forEach((d, i) => {
+            dateToIndex.set(d.date.toISOString().split('T')[0], i);
+        });
+
+        this.eventAnnotations = VIXDashboardCore.VIX_EVENT_ANNOTATIONS
+            .map(evt => {
+                const idx = dateToIndex.get(evt.date);
+                if (idx === undefined) {
+                    console.warn(`[VIX Dashboard] 事件标注日期未找到数据: ${evt.date}`);
+                    return null;
+                }
+                const d = this.data[idx];
+                return {
+                    name: evt.label,
+                    xAxis: idx,
+                    yAxis: d.high,
+                    value: d.high,
+                    itemStyle: { color: '#f59e0b' },
+                    label: {
+                        show: evt.showLabel !== false,
+                        position: 'top',
+                        distance: 8,
+                        color: '#fbbf24',
+                        fontSize: 11,
+                        fontWeight: 'bold',
+                        formatter: '{b}'
+                    },
+                    tooltip: {
+                        trigger: 'item',
+                        backgroundColor: this.colors.surface,
+                        borderColor: this.colors.border,
+                        textStyle: { color: this.colors.textSecondary },
+                        // 注意：evt.date/label/description 当前为硬编码常量，安全。
+                        // 若未来改为外部配置，必须先转义再插入 HTML，防止 XSS。
+                        formatter: `<div style="font-weight:700;margin-bottom:6px;">${evt.date} · ${evt.label}</div>` +
+                            `<div style="max-width:280px;line-height:1.5;color:#e2e8f0;">${evt.description}</div>` +
+                            `<div style="margin-top:6px;color:#94a3b8;">VIX 日内最高: <strong>${d.high.toFixed(2)}</strong></div>`
+                    },
+                    symbol: 'pin',
+                    symbolSize: 28,
+                    symbolRotate: 0
+                };
+            })
+            .filter(a => a !== null);
     }
 
     async loadUpdateInfo() {
@@ -1046,17 +1099,21 @@ class VIXDashboard {
             }
         }
 
+        const windowMaxPoint = {
+            name: '窗口最高',
+            coord: [maxIdx, maxHigh],
+            value: maxHigh,
+            label: { color: '#fff', formatter: '{c}' },
+            itemStyle: { color: this.colors.danger }
+        };
+
         const updateOption = {
             series: [{
                 name: 'VIX K线',
                 markPoint: {
-                    data: [{
-                        name: '窗口最高',
-                        coord: [maxIdx, maxHigh],
-                        value: maxHigh,
-                        label: { color: '#fff', formatter: '{c}' },
-                        itemStyle: { color: this.colors.danger }
-                    }]
+                    animation: false,
+                    symbolSize: 28,
+                    data: [...this.eventAnnotations, windowMaxPoint]
                 }
             }]
         };
