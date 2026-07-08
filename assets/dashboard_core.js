@@ -87,6 +87,33 @@ function parseDate(dateStr) {
 }
 
 /**
+ * 解析 ISO 日期格式 YYYY-MM-DD 为 UTC 日期对象。
+ */
+function parseISODate(isoStr) {
+    if (!isoStr) return null;
+    const parts = isoStr.split('-');
+    if (parts.length !== 3) return null;
+    const year = parseInt(parts[0], 10);
+    const month = parseInt(parts[1], 10) - 1;
+    const day = parseInt(parts[2], 10);
+    const date = new Date(Date.UTC(year, month, day));
+    if (isNaN(date.getTime())) return null;
+    if (date.getUTCFullYear() !== year ||
+        date.getUTCMonth() !== month ||
+        date.getUTCDate() !== day) {
+        return null;
+    }
+    return date;
+}
+
+/**
+ * 将 UTC 日期对象格式化为 ISO 日期字符串 YYYY-MM-DD。
+ */
+function formatISODate(date) {
+    return date.toISOString().slice(0, 10);
+}
+
+/**
  * 解析 CBOE VIX CSV 文本，返回按日期升序排列的数据对象数组。
  */
 function parseCSV(text) {
@@ -214,6 +241,8 @@ const VIXDashboardCore = {
     getVIXRegime,
     escapeHtml,
     parseDate,
+    parseISODate,
+    formatISODate,
     parseCSV,
     lowerBound,
     computeFullPercentile,

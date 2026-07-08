@@ -81,6 +81,14 @@
                 </select>
             </div>
             <div class="control-group">
+                <label for="startDate">起始日期</label>
+                <input type="date" id="startDate">
+            </div>
+            <div class="control-group">
+                <label for="endDate">结束日期</label>
+                <input type="date" id="endDate">
+            </div>
+            <div class="control-group">
                 <button id="resetZoom">重置缩放</button>
             </div>
         </div>
@@ -94,6 +102,7 @@
                 <li><strong>滑动：</strong>按住图表空白处左右拖动，或使用底部滑块</li>
                 <li><strong>三图布局：</strong>上方为 VIX 历史 K 线，中间为对应历史百分位，下方为纳斯达克100历史 K 线，三个图表共享同一个缩放与滑动条</li>
                 <li><strong>百分位：</strong>表示当前 VIX 收盘价在全历史数据中的位置（0-100%），基于日线收盘价计算；也可切换为滚动 1/5/10 年百分位</li>
+                <li><strong>时间窗口：</strong>通过控制栏的“起始日期 / 结束日期”选择任意历史区间，图表会自动对齐到最近的交易日</li>
                 <li><strong>数据来源：</strong>VIX 来自 CBOE 官方 VIX_History.csv；纳斯达克100 来自 Yahoo Finance ^NDX</li>
             </ul>
         </div>

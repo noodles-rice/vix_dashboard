@@ -22,6 +22,38 @@ function testParseDate() {
     assert.strictEqual(core.parseDate('01/02'), null);
 }
 
+function testParseISODate() {
+    const d = core.parseISODate('2020-12-31');
+    assert.strictEqual(d.toISOString(), '2020-12-31T00:00:00.000Z');
+    assert.strictEqual(core.parseISODate(''), null);
+    assert.strictEqual(core.parseISODate(null), null);
+    assert.strictEqual(core.parseISODate('2020-13-01'), null);
+    assert.strictEqual(core.parseISODate('not-a-date'), null);
+}
+
+function testFormatISODate() {
+    assert.strictEqual(core.formatISODate(new Date(Date.UTC(2020, 11, 31))), '2020-12-31');
+    assert.strictEqual(core.formatISODate(new Date(Date.UTC(1990, 0, 2))), '1990-01-02');
+}
+
+function testLowerBoundDateLookup() {
+    const data = [
+        { date: new Date(Date.UTC(2020, 0, 1)), close: 10 },
+        { date: new Date(Date.UTC(2020, 0, 3)), close: 20 },
+        { date: new Date(Date.UTC(2020, 0, 6)), close: 30 }
+    ];
+
+    // 查找第一个日期 >= 2020-01-02 的索引（应跳到 2020-01-03）
+    const startIdx = core.lowerBound(data, new Date(Date.UTC(2020, 0, 2)).getTime(),
+        (a, b) => a.date.getTime() < b);
+    assert.strictEqual(startIdx, 1);
+
+    // 查找最后一个日期 <= 2020-01-05 的索引（应回到 2020-01-03）
+    const endIdx = core.lowerBound(data, new Date(Date.UTC(2020, 0, 5)).getTime(),
+        (a, b) => a.date.getTime() <= b) - 1;
+    assert.strictEqual(endIdx, 1);
+}
+
 function testParseCSV() {
     const csv = `DATE,OPEN,HIGH,LOW,CLOSE
 01/03/2020,17,18,16,17.5
@@ -148,6 +180,9 @@ function runTests() {
     const tests = [
         testEscapeHtml,
         testParseDate,
+        testParseISODate,
+        testFormatISODate,
+        testLowerBoundDateLookup,
         testParseCSV,
         testParseCSVRequiresColumns,
         testComputeFullPercentile,

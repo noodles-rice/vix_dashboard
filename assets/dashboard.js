@@ -201,6 +201,15 @@ class VIXDashboard {
                 start: 0,
                 end: 100
             });
+            this.initDateInputs();
+        });
+
+        document.getElementById('startDate').addEventListener('change', () => {
+            this.applyDateRange();
+        });
+
+        document.getElementById('endDate').addEventListener('change', () => {
+            this.applyDateRange();
         });
 
         this.chart.on('dataZoom', (params) => {
@@ -210,12 +219,70 @@ class VIXDashboard {
         });
     }
 
+    initDateInputs() {
+        if (!this.data.length) return;
+        const startInput = document.getElementById('startDate');
+        const endInput = document.getElementById('endDate');
+        if (!startInput || !endInput) return;
+
+        const first = VIXDashboardCore.formatISODate(this.data[0].date);
+        const last = VIXDashboardCore.formatISODate(this.data[this.data.length - 1].date);
+        startInput.min = first;
+        startInput.max = last;
+        endInput.min = first;
+        endInput.max = last;
+        startInput.value = first;
+        endInput.value = last;
+    }
+
+    applyDateRange() {
+        if (!this.data.length || !this.chart) return;
+        const startInput = document.getElementById('startDate');
+        const endInput = document.getElementById('endDate');
+        if (!startInput || !endInput) return;
+
+        let startDate = VIXDashboardCore.parseISODate(startInput.value) || this.data[0].date;
+        let endDate = VIXDashboardCore.parseISODate(endInput.value) || this.data[this.data.length - 1].date;
+        if (startDate > endDate) {
+            [startDate, endDate] = [endDate, startDate];
+        }
+
+        const n = this.data.length;
+        const startIdx = Math.max(0, Math.min(n - 1,
+            VIXDashboardCore.lowerBound(this.data, startDate.getTime(),
+                (a, b) => a.date.getTime() < b)));
+        const endIdx = Math.max(0, Math.min(n - 1,
+            VIXDashboardCore.lowerBound(this.data, endDate.getTime(),
+                (a, b) => a.date.getTime() <= b) - 1));
+
+        const [finalStartIdx, finalEndIdx] = startIdx <= endIdx
+            ? [startIdx, endIdx]
+            : [endIdx, startIdx];
+
+        this.chart.dispatchAction({
+            type: 'dataZoom',
+            startValue: finalStartIdx,
+            endValue: finalEndIdx
+        });
+    }
+
+    updateDateInputs(startIdx, endIdx) {
+        const startInput = document.getElementById('startDate');
+        const endInput = document.getElementById('endDate');
+        if (!startInput || !endInput || !this.data.length) return;
+
+        const startDate = VIXDashboardCore.formatISODate(this.data[startIdx].date);
+        const endDate = VIXDashboardCore.formatISODate(this.data[endIdx].date);
+        if (startInput.value !== startDate) startInput.value = startDate;
+        if (endInput.value !== endDate) endInput.value = endDate;
+    }
+
     async loadData() {
         this.showLoading('正在加载 VIX / 纳斯达克100 历史数据...');
         try {
             const [vixResponse, ndxResponse] = await Promise.all([
-                fetch('data/VIX_History.csv'),
-                fetch('data/NDX_History.csv')
+                fetch('data/VIX_History.csv', { cache: 'no-store' }),
+                fetch('data/NDX_History.csv', { cache: 'no-store' })
             ]);
 
             if (!vixResponse.ok) {
@@ -262,6 +329,7 @@ class VIXDashboard {
                         this.computeFullPercentile();
                         this.hideLoading();
                         this.updateStats();
+                        this.initDateInputs();
                         this.updateChart();
                     } catch (err) {
                         console.error('[VIX Dashboard] Compute error:', err);
@@ -317,7 +385,7 @@ class VIXDashboard {
         const elem = document.getElementById(elemId);
         if (!elem) return;
         try {
-            const response = await fetch(url);
+            const response = await fetch(url, { cache: 'no-store' });
             if (!response.ok) {
                 if (response.status === 404) {
                     elem.textContent = '未记录';
@@ -886,6 +954,8 @@ class VIXDashboard {
         if (startIdx > endIdx) {
             [startIdx, endIdx] = [endIdx, startIdx];
         }
+
+        this.updateDateInputs(startIdx, endIdx);
 
         // VIX 窗口真实最高价标记
         let maxHigh = -Infinity;
