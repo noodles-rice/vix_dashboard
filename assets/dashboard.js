@@ -40,6 +40,8 @@ class VIXDashboard {
         this.spxFlatDots = [];
         this.spxError = null;
         this.ndxLogScale = true;
+        this.ndxVisible = true;
+        this.spxVisible = true;
         this.chart = null;
         this.computedWindows = new Set(['full']);
         this.eventAnnotations = [];
@@ -248,6 +250,25 @@ class VIXDashboard {
             clearTimeout(this.zoomUpdateTimer);
             this.zoomUpdateTimer = setTimeout(() => this.updateVisibleRanges(batch), ZOOM_DEBOUNCE_MS);
         });
+
+        this.chart.on('click', (params) => {
+            this.handleAxisClick(params);
+        });
+    }
+
+    handleAxisClick(params) {
+        const result = VIXDashboardCore.resolveAxisToggle(
+            params,
+            VIXDashboardCore.AXIS_NAME_NDX,
+            VIXDashboardCore.AXIS_NAME_SPX,
+            { ndxVisible: this.ndxVisible, spxVisible: this.spxVisible }
+        );
+
+        if (result.changed) {
+            this.ndxVisible = result.ndxVisible;
+            this.spxVisible = result.spxVisible;
+            this.updateChart();
+        }
     }
 
     initDateInputs() {
@@ -908,16 +929,18 @@ class VIXDashboard {
                     return html;
                 }
             },
+            // 三个 grid 使用相同的 right 边距，确保时间轴长度一致；
+            // 底部 grid 需要容纳右侧的 SPX 纵轴，因此统一放大而非单独缩小。
             grid: [
                 {
                     left: GRID_LEFT_MARGIN,
-                    right: '4%',
+                    right: '8%',
                     top: CHART_LAYOUT.gridTops[0],
                     height: CHART_LAYOUT.gridHeight
                 },
                 {
                     left: GRID_LEFT_MARGIN,
-                    right: '4%',
+                    right: '8%',
                     top: CHART_LAYOUT.gridTops[1],
                     height: CHART_LAYOUT.gridHeight
                 },
@@ -983,26 +1006,28 @@ class VIXDashboard {
                 },
                 {
                     type: this.ndxLogScale ? 'log' : 'value',
-                    name: 'NASDAQ-100',
+                    name: VIXDashboardCore.AXIS_NAME_NDX,
                     gridIndex: 2,
                     position: 'left',
                     scale: true,
-                    axisLine: { show: true, lineStyle: { color: c.primary } },
-                    axisLabel: { color: c.textMuted, formatter: value => Math.round(value).toString() },
+                    triggerEvent: true,
+                    axisLine: { show: true, lineStyle: { color: this.ndxVisible ? c.primary : c.textMuted } },
+                    axisLabel: { color: this.ndxVisible ? c.textMuted : c.textSubtle, formatter: value => Math.round(value).toString() },
                     splitLine: { lineStyle: { color: c.border, type: 'dashed' } },
-                    nameTextStyle: { color: c.primary },
+                    nameTextStyle: { color: this.ndxVisible ? c.primary : c.textMuted },
                     logBase: 10
                 },
                 {
                     type: this.ndxLogScale ? 'log' : 'value',
-                    name: 'S&P 500',
+                    name: VIXDashboardCore.AXIS_NAME_SPX,
                     gridIndex: 2,
                     position: 'right',
                     scale: true,
-                    axisLine: { show: true, lineStyle: { color: c.secondary } },
-                    axisLabel: { color: c.textMuted, formatter: value => Math.round(value).toString() },
+                    triggerEvent: true,
+                    axisLine: { show: true, lineStyle: { color: this.spxVisible ? c.secondary : c.textMuted } },
+                    axisLabel: { color: this.spxVisible ? c.textMuted : c.textSubtle, formatter: value => Math.round(value).toString() },
                     splitLine: { show: false },
-                    nameTextStyle: { color: c.secondary },
+                    nameTextStyle: { color: this.spxVisible ? c.secondary : c.textMuted },
                     logBase: 10
                 }
             ],
@@ -1113,7 +1138,7 @@ class VIXDashboard {
                 {
                     name: 'NASDAQ-100 K线',
                     type: 'candlestick',
-                    data: ndxSeriesData,
+                    data: this.ndxVisible ? ndxSeriesData : [],
                     xAxisIndex: 2,
                     yAxisIndex: 2,
                     itemStyle: {
@@ -1126,7 +1151,7 @@ class VIXDashboard {
                 {
                     name: 'NASDAQ-100 平线',
                     type: 'scatter',
-                    data: ndxFlatDots,
+                    data: this.ndxVisible ? ndxFlatDots : [],
                     xAxisIndex: 2,
                     yAxisIndex: 2,
                     symbol: 'circle',
@@ -1138,7 +1163,7 @@ class VIXDashboard {
                 {
                     name: 'S&P 500 K线',
                     type: 'candlestick',
-                    data: spxSeriesData,
+                    data: this.spxVisible ? spxSeriesData : [],
                     xAxisIndex: 2,
                     yAxisIndex: 3,
                     itemStyle: {
@@ -1152,7 +1177,7 @@ class VIXDashboard {
                 {
                     name: 'S&P 500 平线',
                     type: 'scatter',
-                    data: spxFlatDots,
+                    data: this.spxVisible ? spxFlatDots : [],
                     xAxisIndex: 2,
                     yAxisIndex: 3,
                     symbol: 'circle',

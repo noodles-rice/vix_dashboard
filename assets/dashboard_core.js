@@ -16,6 +16,13 @@ const VIX_MARK_LINE_LOW = 20;
 const VIX_MARK_LINE_HIGH = 30;
 
 /**
+ * 底部 NDX / SPX 双 Y 轴的轴名称。
+ * 用于配置坐标轴，并作为点击切换系列显示/隐藏时的识别标识。
+ */
+const AXIS_NAME_NDX = 'NASDAQ-100';
+const AXIS_NAME_SPX = 'S&P 500';
+
+/**
  * VIX 事件标注的日内最高价阈值。
  * 当 VIX 最高价超过该值时，对应的交易日会被纳入事件标注范围。
  */
@@ -444,6 +451,36 @@ function buildPreviousCloseArray(ohlc) {
     return prevCloses;
 }
 
+/**
+ * 根据 ECharts yAxis 点击事件参数，判断是否需要切换 NDX / SPX 的可见性。
+ *
+ * ECharts 点击轴名称时 `params.axisIndex` 为 null，但 `params.name` 会携带轴名称；
+ * 点击轴标签时 `params.name` 为 null。这里优先按名称匹配，再按 axisIndex 兜底。
+ */
+function resolveAxisToggle(params, ndxName, spxName, visibility) {
+    if (params.componentType !== 'yAxis') {
+        return { ...visibility, changed: false };
+    }
+
+    if (params.name === ndxName || params.axisIndex === 2) {
+        return {
+            ndxVisible: !visibility.ndxVisible,
+            spxVisible: visibility.spxVisible,
+            changed: true
+        };
+    }
+
+    if (params.name === spxName || params.axisIndex === 3) {
+        return {
+            ndxVisible: visibility.ndxVisible,
+            spxVisible: !visibility.spxVisible,
+            changed: true
+        };
+    }
+
+    return { ...visibility, changed: false };
+}
+
 const VIXDashboardCore = {
     PERCENTILE_WINDOWS,
     VIX_MARK_LINE_LOW,
@@ -453,6 +490,8 @@ const VIXDashboardCore = {
     PERCENTILE_PIECES,
     PERCENTILE_PIECE_BOUNDARIES,
     VIX_THRESHOLDS,
+    AXIS_NAME_NDX,
+    AXIS_NAME_SPX,
     getVIXRegime,
     escapeHtml,
     parseDate,
@@ -462,7 +501,8 @@ const VIXDashboardCore = {
     lowerBound,
     computeFullPercentile,
     computeRollingPercentile,
-    buildPreviousCloseArray
+    buildPreviousCloseArray,
+    resolveAxisToggle
 };
 
 if (typeof module !== 'undefined' && module.exports) {

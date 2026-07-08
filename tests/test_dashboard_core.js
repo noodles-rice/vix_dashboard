@@ -239,6 +239,58 @@ function testBuildPreviousCloseArrayEmpty() {
     assert.deepStrictEqual(core.buildPreviousCloseArray('invalid'), []);
 }
 
+function testResolveAxisToggleByName() {
+    const visibility = { ndxVisible: true, spxVisible: true };
+    const ndxResult = core.resolveAxisToggle(
+        { componentType: 'yAxis', name: core.AXIS_NAME_NDX, axisIndex: null },
+        core.AXIS_NAME_NDX,
+        core.AXIS_NAME_SPX,
+        visibility
+    );
+    assert.deepStrictEqual(ndxResult, { ndxVisible: false, spxVisible: true, changed: true });
+
+    const spxResult = core.resolveAxisToggle(
+        { componentType: 'yAxis', name: core.AXIS_NAME_SPX, axisIndex: null },
+        core.AXIS_NAME_NDX,
+        core.AXIS_NAME_SPX,
+        visibility
+    );
+    assert.deepStrictEqual(spxResult, { ndxVisible: true, spxVisible: false, changed: true });
+}
+
+function testResolveAxisToggleByAxisIndex() {
+    const visibility = { ndxVisible: false, spxVisible: true };
+    const result = core.resolveAxisToggle(
+        { componentType: 'yAxis', name: null, axisIndex: 2 },
+        core.AXIS_NAME_NDX,
+        core.AXIS_NAME_SPX,
+        visibility
+    );
+    assert.deepStrictEqual(result, { ndxVisible: true, spxVisible: true, changed: true });
+}
+
+function testResolveAxisToggleIgnoresOtherComponents() {
+    const visibility = { ndxVisible: true, spxVisible: true };
+    const result = core.resolveAxisToggle(
+        { componentType: 'series', name: 'some series' },
+        core.AXIS_NAME_NDX,
+        core.AXIS_NAME_SPX,
+        visibility
+    );
+    assert.deepStrictEqual(result, { ndxVisible: true, spxVisible: true, changed: false });
+}
+
+function testResolveAxisToggleIgnoresOtherAxisNames() {
+    const visibility = { ndxVisible: true, spxVisible: true };
+    const result = core.resolveAxisToggle(
+        { componentType: 'yAxis', name: 'VIX', axisIndex: 0 },
+        core.AXIS_NAME_NDX,
+        core.AXIS_NAME_SPX,
+        visibility
+    );
+    assert.deepStrictEqual(result, { ndxVisible: true, spxVisible: true, changed: false });
+}
+
 function runTests() {
     const tests = [
         testEscapeHtml,
@@ -262,6 +314,10 @@ function runTests() {
         testBuildPreviousCloseArray,
         testBuildPreviousCloseArrayWithNulls,
         testBuildPreviousCloseArrayEmpty,
+        testResolveAxisToggleByName,
+        testResolveAxisToggleByAxisIndex,
+        testResolveAxisToggleIgnoresOtherComponents,
+        testResolveAxisToggleIgnoresOtherAxisNames,
     ];
 
     let passed = 0;
