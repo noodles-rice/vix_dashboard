@@ -887,13 +887,13 @@ class VIXDashboard {
             [startIdx, endIdx] = [endIdx, startIdx];
         }
 
-        // VIX 窗口最高收盘价标记
-        let maxClose = -Infinity;
+        // VIX 窗口真实最高价标记
+        let maxHigh = -Infinity;
         let maxIdx = startIdx;
         for (let i = startIdx; i <= endIdx; i++) {
-            const v = this.closes[i];
-            if (v > maxClose) {
-                maxClose = v;
+            const v = this.data[i].high;
+            if (v > maxHigh) {
+                maxHigh = v;
                 maxIdx = i;
             }
         }
@@ -904,8 +904,8 @@ class VIXDashboard {
                 markPoint: {
                     data: [{
                         name: '窗口最高',
-                        coord: [maxIdx, maxClose],
-                        value: maxClose,
+                        coord: [maxIdx, maxHigh],
+                        value: maxHigh,
                         label: { color: '#fff', formatter: '{c}' },
                         itemStyle: { color: this.colors.danger }
                     }]
