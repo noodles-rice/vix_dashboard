@@ -15,6 +15,8 @@
 | `assets/dashboard_core.js` | 可测试的纯函数核心：CSV 解析、日期解析、百分位计算 |
 | `assets/style.css` | 页面样式 |
 | `scripts/start.py` | 启动脚本：自动更新 VIX / 纳斯达克100 数据并启动本地 HTTP 服务 |
+| `scripts/backtest.py` | VectorBT 回测脚本：VIX 驱动 QQQ/QLD/TQQQ 杠杆轮动 |
+| `scripts/optimize.py` | VIX 阈值参数扫描脚本 |
 | `tests/test_start.py` | `scripts/start.py` 的单元测试 |
 | `tests/test_dashboard_core.js` | `assets/dashboard_core.js` 的单元测试 |
 
@@ -22,22 +24,22 @@
 
 由于浏览器安全策略，本地 CSV 文件需要通过 HTTP 服务器加载。本项目提供 `scripts/start.py` 启动脚本，在启动服务前会自动从 CBOE 拉取最新 VIX 数据、从 Yahoo Finance 拉取最新纳斯达克100数据，并更新本地 CSV：
 
-首次使用前请安装依赖：
+首次使用前请安装依赖（务必使用项目虚拟环境）：
 
 ```bash
-pip install -r requirements.txt
+source /root/vix/.venv/bin/activate && pip install -r requirements.txt
 ```
 
 然后运行：
 
 ```bash
-python3 scripts/start.py
+source /root/vix/.venv/bin/activate && python3 scripts/start.py
 ```
 
 默认监听 `8080` 端口，也可自定义端口：
 
 ```bash
-python3 scripts/start.py 9000
+source /root/vix/.venv/bin/activate && python3 scripts/start.py 9000
 ```
 
 然后在浏览器中打开：
@@ -75,8 +77,46 @@ http://localhost:8080
 
 > 注意：这些阈值是市场经验值，会随市场环境和时间中枢变化，建议结合滚动分位数综合判断。
 
+## 回测（VectorBT）
+
+项目已集成基于 [VectorBT](https://vectorbt.dev/) 的回测脚本，策略为 **VIX 驱动 QQQ/QLD/TQQQ 杠杆轮动**：
+
+- VIX < low：满仓 TQQQ（3 倍）
+- low ≤ VIX < mid：满仓 QLD（2 倍）
+- mid ≤ VIX < high：满仓 QQQ（1 倍）
+- VIX ≥ high：空仓
+
+默认阈值：`13, 20, 30`。
+
+### 运行单次回测
+
+```bash
+source /root/vix/.venv/bin/activate && python scripts/backtest.py
+```
+
+结果（权益曲线 HTML + 绩效 JSON）会保存到 `output/` 目录。
+
+### 自定义参数
+
+```bash
+source /root/vix/.venv/bin/activate && python scripts/backtest.py \
+  --thresholds 15 25 30 \
+  --cash 100000 \
+  --fees 0.0005 \
+  --slippage 0.0005
+```
+
+### VIX 阈值参数扫描
+
+```bash
+source /root/vix/.venv/bin/activate && python scripts/optimize.py --metric calmar
+```
+
+支持按 `total_return`、`annual_return`、`sharpe`、`calmar` 排序找出最佳阈值组合，完整结果保存为 `output/vix_threshold_scan_*.csv`。
+
 ## 数据来源
 
 - VIX：CBOE 官方 `https://cdn.cboe.com/api/global/us_indices/daily_prices/VIX_History.csv`
 - 纳斯达克100：Yahoo Finance `^NDX`（通过 `yfinance` 拉取）
+- QQQ / QLD / TQQQ：Yahoo Finance（通过 `yfinance` 拉取）
 - 数据字段：`DATE`, `OPEN`, `HIGH`, `LOW`, `CLOSE`

@@ -12,3 +12,9 @@ screenshot.png
 # Runtime generated update metadata
 data/last_update.json
 data/*_last_update.json
+
+# Backtest / optimization outputs
+output/
+
+# Accidental shell redirection artifacts
+=0.26
