@@ -32,10 +32,11 @@ from backtest import (
     run_backtest,
 )
 
-# 默认阈值扫描范围
-DEFAULT_LOW_VALUES = [10.0, 13.0, 15.0, 17.0]
-DEFAULT_MID_VALUES = [17.0, 20.0, 22.0, 25.0]
-DEFAULT_HIGH_VALUES = [25.0, 30.0, 35.0]
+# 默认阈值扫描范围，必须满足 low < mid1 < mid2 < high
+DEFAULT_LOW_VALUES = [10.0, 13.0, 15.0]
+DEFAULT_MID1_VALUES = [17.0, 20.0, 22.0]
+DEFAULT_MID2_VALUES = [25.0, 30.0, 35.0]
+DEFAULT_HIGH_VALUES = [35.0, 40.0, 45.0]
 
 
 def scan_thresholds(
@@ -43,7 +44,8 @@ def scan_thresholds(
     start,
     end,
     low_values,
-    mid_values,
+    mid1_values,
+    mid2_values,
     high_values,
     initial_cash,
     fees,
@@ -51,17 +53,19 @@ def scan_thresholds(
     close,
     vix,
 ):
-    """遍历所有满足 low < mid < high 的阈值组合，返回结果 DataFrame。
+    """遍历所有满足 low < mid1 < mid2 < high 的阈值组合，返回结果 DataFrame。
 
     close 和 vix 由调用方一次性拉取，避免重复网络请求。
     """
     results = []
 
-    for low, mid, high in itertools.product(low_values, mid_values, high_values):
-        if not (low < mid < high):
+    for low, mid1, mid2, high in itertools.product(
+        low_values, mid1_values, mid2_values, high_values
+    ):
+        if not (low < mid1 < mid2 < high):
             continue
 
-        thresholds = (low, mid, high)
+        thresholds = (low, mid1, mid2, high)
         try:
             portfolio, _, _, _ = run_backtest(
                 symbols=symbols,
@@ -78,7 +82,8 @@ def scan_thresholds(
             results.append(
                 {
                     "low": low,
-                    "mid": mid,
+                    "mid1": mid1,
+                    "mid2": mid2,
                     "high": high,
                     "total_return": metrics["total_return"],
                     "annual_return": metrics["annual_return"],
@@ -103,7 +108,10 @@ def main():
         "--low", nargs="+", type=float, default=DEFAULT_LOW_VALUES, help="低阈值候选值"
     )
     parser.add_argument(
-        "--mid", nargs="+", type=float, default=DEFAULT_MID_VALUES, help="中阈值候选值"
+        "--mid1", nargs="+", type=float, default=DEFAULT_MID1_VALUES, help="第一中阈值候选值"
+    )
+    parser.add_argument(
+        "--mid2", nargs="+", type=float, default=DEFAULT_MID2_VALUES, help="第二中阈值候选值"
     )
     parser.add_argument(
         "--high", nargs="+", type=float, default=DEFAULT_HIGH_VALUES, help="高阈值候选值"
@@ -128,7 +136,8 @@ def main():
         start=args.start,
         end=args.end,
         low_values=args.low,
-        mid_values=args.mid,
+        mid1_values=args.mid1,
+        mid2_values=args.mid2,
         high_values=args.high,
         initial_cash=args.cash,
         fees=args.fees,
@@ -155,7 +164,10 @@ def main():
     print(f"\n[Optimize] 完整扫描结果已保存: {csv_path}")
 
     best = top.iloc[0]
-    print(f"\n[Optimize] 最佳组合: low={best['low']}, mid={best['mid']}, high={best['high']}")
+    print(
+        f"\n[Optimize] 最佳组合: low={best['low']}, mid1={best['mid1']}, "
+        f"mid2={best['mid2']}, high={best['high']}"
+    )
     print(f"  总收益率:   {best['total_return']:.2%}")
     print(f"  年化收益:   {best['annual_return']:.2%}")
     print(f"  夏普比率:   {best['sharpe']:.2f}")

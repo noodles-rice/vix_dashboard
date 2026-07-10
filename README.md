@@ -80,14 +80,17 @@ http://localhost:8080
 
 ## 回测（VectorBT）
 
-项目已集成基于 [VectorBT](https://vectorbt.dev/) 的回测脚本，策略为 **VIX 驱动 QQQ/QLD/TQQQ 杠杆轮动**：
+项目已集成基于 [VectorBT](https://vectorbt.dev/) 的回测脚本，策略为 **VIX 驱动 QQQ/QLD/TQQQ 杠杆轮动**（VIX 越高越激进，越低越保守）：
 
-- VIX < low：满仓 TQQQ（3 倍）
-- low ≤ VIX < mid：满仓 QLD（2 倍）
-- mid ≤ VIX < high：满仓 QQQ（1 倍）
-- VIX ≥ high：空仓
+- VIX < low：半仓 QQQ（0.5 倍）
+- low ≤ VIX < mid1：满仓 QQQ（1 倍）
+- mid1 < VIX ≤ mid2：半仓 QLD + 半仓 QQQ（1.5 倍）
+- mid2 < VIX ≤ high：满仓 QLD（2 倍）
+- VIX > high：半仓 QLD + 半仓 TQQQ（2.5 倍）
 
-默认阈值：`13, 20, 30`。
+标的缺失时按以下链条回退：TQQQ → QLD → QQQ → 空仓，QLD → QQQ → 空仓。
+
+默认阈值：`13, 20, 30, 40`。
 
 ### 运行单次回测
 
@@ -101,7 +104,7 @@ source /root/vix/.venv/bin/activate && python scripts/backtest.py
 
 ```bash
 source /root/vix/.venv/bin/activate && python scripts/backtest.py \
-  --thresholds 15 25 30 \
+  --thresholds 15 25 35 45 \
   --cash 100000 \
   --fees 0.0005 \
   --slippage 0.0005

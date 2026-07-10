@@ -31,57 +31,121 @@ class TestBuildSignals(unittest.TestCase):
 
     def test_threshold_mapping(self):
         close, dates = self._make_data()
-        # VIX 序列: 12(<13) -> TQQQ, 15(13-20) -> QLD, 25(20-30) -> QQQ,
-        # 35(>=30) -> cash, 20(20-30) -> QQQ
+        # VIX 序列: 12(<13) -> 半仓 QQQ, 15(13-20) -> 满仓 QQQ,
+        # 25(20-30] -> 半仓 QLD+半仓 QQQ, 35(30-40] -> 满仓 QLD,
+        # 20(20-30] -> 半仓 QLD+半仓 QQQ
         vix = pd.Series([12.0, 15.0, 25.0, 35.0, 20.0], index=dates)
-        weights = backtest.build_signals(close, vix, (13.0, 20.0, 30.0))
+        weights = backtest.build_signals(close, vix, (13.0, 20.0, 30.0, 40.0))
 
-        self.assertAlmostEqual(weights.loc[dates[0], "TQQQ"], 1.0)
-        self.assertAlmostEqual(weights.loc[dates[1], "QLD"], 1.0)
-        self.assertAlmostEqual(weights.loc[dates[2], "QQQ"], 1.0)
-        self.assertTrue((weights.loc[dates[3]] == 0.0).all())
-        self.assertAlmostEqual(weights.loc[dates[4], "QQQ"], 1.0)
+        self.assertAlmostEqual(weights.loc[dates[0], "QQQ"], 0.5)
+        self.assertAlmostEqual(weights.loc[dates[1], "QQQ"], 1.0)
+        self.assertAlmostEqual(weights.loc[dates[2], "QLD"], 0.5)
+        self.assertAlmostEqual(weights.loc[dates[2], "QQQ"], 0.5)
+        self.assertAlmostEqual(weights.loc[dates[3], "QLD"], 1.0)
+        self.assertAlmostEqual(weights.loc[dates[4], "QLD"], 0.5)
+        self.assertAlmostEqual(weights.loc[dates[4], "QQQ"], 0.5)
 
-    def test_weights_sum_to_one_or_zero(self):
+    def test_weights_sum_to_half_or_one(self):
         close, dates = self._make_data()
-        vix = pd.Series([12.0, 15.0, 25.0, 35.0, 20.0], index=dates)
-        weights = backtest.build_signals(close, vix, (13.0, 20.0, 30.0))
+        vix = pd.Series([12.0, 15.0, 25.0, 35.0, 45.0], index=dates)
+        weights = backtest.build_signals(close, vix, (13.0, 20.0, 30.0, 40.0))
         row_sums = weights.sum(axis=1)
-        self.assertTrue(((row_sums - 1.0).abs() < 1e-12).all() or (row_sums == 0.0).any())
-        # 更精确：每一天权重和应为 1 或 0
-        self.assertTrue(((row_sums == 1.0) | (row_sums == 0.0)).all())
+        # 每一天权重和应为 0.5 或 1.0
+        self.assertTrue(((row_sums == 0.5) | (row_sums == 1.0)).all())
 
     def test_missing_vix_forward_filled(self):
         close, dates = self._make_data()
         vix = pd.Series([12.0, np.nan, 25.0, np.nan, 20.0], index=dates)
-        weights = backtest.build_signals(close, vix, (13.0, 20.0, 30.0))
-        # 缺失 VIX 应被前向填充：12 -> TQQQ, 12(ffill) -> TQQQ, 25 -> QQQ, 25(ffill) -> QQQ, 20 -> QQQ
-        self.assertAlmostEqual(weights.loc[dates[0], "TQQQ"], 1.0)
-        self.assertAlmostEqual(weights.loc[dates[1], "TQQQ"], 1.0)
-        self.assertAlmostEqual(weights.loc[dates[2], "QQQ"], 1.0)
-        self.assertAlmostEqual(weights.loc[dates[3], "QQQ"], 1.0)
-        self.assertAlmostEqual(weights.loc[dates[4], "QQQ"], 1.0)
+        weights = backtest.build_signals(close, vix, (13.0, 20.0, 30.0, 40.0))
+        # 缺失 VIX 前向填充：12 -> 半仓 QQQ, 12 -> 半仓 QQQ,
+        # 25 -> 半仓 QLD+半仓 QQQ, 25 -> 半仓 QLD+半仓 QQQ, 20 -> 半仓 QLD+半仓 QQQ
+        self.assertAlmostEqual(weights.loc[dates[0], "QQQ"], 0.5)
+        self.assertAlmostEqual(weights.loc[dates[1], "QQQ"], 0.5)
+        self.assertAlmostEqual(weights.loc[dates[2], "QLD"], 0.5)
+        self.assertAlmostEqual(weights.loc[dates[2], "QQQ"], 0.5)
+        self.assertAlmostEqual(weights.loc[dates[3], "QLD"], 0.5)
+        self.assertAlmostEqual(weights.loc[dates[3], "QQQ"], 0.5)
+        self.assertAlmostEqual(weights.loc[dates[4], "QLD"], 0.5)
+        self.assertAlmostEqual(weights.loc[dates[4], "QQQ"], 0.5)
 
-    def test_pre_listing_nan_keeps_cash(self):
+    def test_pre_listing_qqq_nan_keeps_cash(self):
+        close, dates = self._make_data(n=2)
+        close.loc[dates[0], "QQQ"] = np.nan
+        vix = pd.Series([12.0, 12.0], index=dates)
+        weights = backtest.build_signals(close, vix, (13.0, 20.0, 30.0, 40.0))
+        # VIX<13 目标 QQQ 缺失，无回退标的，应保持空仓
+        self.assertTrue((weights.loc[dates[0]] == 0.0).all())
+        self.assertAlmostEqual(weights.loc[dates[1], "QQQ"], 0.5)
+
+    def test_high_vix_tqqq_nan_falls_back_to_qld(self):
         close, dates = self._make_data(n=2)
         close.loc[dates[0], "TQQQ"] = np.nan
-        vix = pd.Series([12.0, 12.0], index=dates)
-        weights = backtest.build_signals(close, vix, (13.0, 20.0, 30.0))
-        # 第一行 TQQQ 未上市，即使 VIX<13 也应空仓
+        vix = pd.Series([45.0, 45.0], index=dates)
+        weights = backtest.build_signals(close, vix, (13.0, 20.0, 30.0, 40.0))
+        # VIX>40 目标半仓 TQQQ 缺失，应回退到 QLD，即 50% QLD + 50% QLD = 100% QLD
+        self.assertAlmostEqual(weights.loc[dates[0], "QLD"], 1.0)
+        self.assertAlmostEqual(weights.loc[dates[1], "QLD"], 0.5)
+        self.assertAlmostEqual(weights.loc[dates[1], "TQQQ"], 0.5)
+
+    def test_high_vix_tqqq_and_qld_nan_fall_back_to_qqq(self):
+        close, dates = self._make_data(n=2)
+        close.loc[dates[0], ["TQQQ", "QLD"]] = np.nan
+        vix = pd.Series([45.0, 45.0], index=dates)
+        weights = backtest.build_signals(close, vix, (13.0, 20.0, 30.0, 40.0))
+        # VIX>40 半仓 QLD、半仓 TQQQ 均缺失，均回退到 QQQ，即满仓 QQQ
+        self.assertAlmostEqual(weights.loc[dates[0], "QQQ"], 1.0)
+        self.assertAlmostEqual(weights.loc[dates[1], "QLD"], 0.5)
+        self.assertAlmostEqual(weights.loc[dates[1], "TQQQ"], 0.5)
+
+    def test_mid_vix_qld_nan_falls_back_to_qqq(self):
+        close, dates = self._make_data(n=2)
+        close.loc[dates[0], "QLD"] = np.nan
+        vix = pd.Series([25.0, 25.0], index=dates)
+        weights = backtest.build_signals(close, vix, (13.0, 20.0, 30.0, 40.0))
+        # VIX 在 (20,30] 半仓 QLD 缺失 -> 半仓 QQQ，加上原半仓 QQQ = 满仓 QQQ
+        self.assertAlmostEqual(weights.loc[dates[0], "QQQ"], 1.0)
+        self.assertAlmostEqual(weights.loc[dates[1], "QLD"], 0.5)
+        self.assertAlmostEqual(weights.loc[dates[1], "QQQ"], 0.5)
+
+    def test_all_target_nan_falls_back_to_cash(self):
+        close, dates = self._make_data(n=2)
+        close.loc[dates[0], ["TQQQ", "QLD", "QQQ"]] = np.nan
+        vix = pd.Series([35.0, 35.0], index=dates)
+        weights = backtest.build_signals(close, vix, (13.0, 20.0, 30.0, 40.0))
+        # 所有候选标的均缺失，应保持空仓
         self.assertTrue((weights.loc[dates[0]] == 0.0).all())
-        self.assertAlmostEqual(weights.loc[dates[1], "TQQQ"], 1.0)
+        self.assertAlmostEqual(weights.loc[dates[1], "QLD"], 1.0)
 
     def test_unknown_symbol_ignored(self):
         close, dates = self._make_data()
         close = close.drop(columns=["TQQQ", "QLD"])
-        vix = pd.Series([12.0, 15.0, 25.0, 35.0, 20.0], index=dates)
-        weights = backtest.build_signals(close, vix, (13.0, 20.0, 30.0))
-        # 只有 QQQ 列，所有非 QQQ 区间都应为空仓
+        vix = pd.Series([12.0, 15.0, 25.0, 35.0, 45.0], index=dates)
+        weights = backtest.build_signals(close, vix, (13.0, 20.0, 30.0, 40.0))
+        # 只有 QQQ 列，所有包含 QQQ 的区间均回退到 QQQ
+        self.assertAlmostEqual(weights.loc[dates[0], "QQQ"], 0.5)
+        self.assertAlmostEqual(weights.loc[dates[1], "QQQ"], 1.0)
         self.assertAlmostEqual(weights.loc[dates[2], "QQQ"], 1.0)
+        self.assertAlmostEqual(weights.loc[dates[3], "QQQ"], 1.0)
         self.assertAlmostEqual(weights.loc[dates[4], "QQQ"], 1.0)
-        self.assertTrue((weights.loc[dates[0]] == 0.0).all())
-        self.assertTrue((weights.loc[dates[1]] == 0.0).all())
-        self.assertTrue((weights.loc[dates[3]] == 0.0).all())
+
+    def test_all_nan_vix_keeps_cash(self):
+        close, dates = self._make_data()
+        vix = pd.Series([np.nan] * len(dates), index=dates)
+        weights = backtest.build_signals(close, vix, (13.0, 20.0, 30.0, 40.0))
+        self.assertTrue((weights == 0.0).all().all())
+
+    def test_leading_nan_vix_keeps_cash_until_first_valid(self):
+        close, dates = self._make_data(n=5)
+        # VIX 从第 4 个交易日才有数据
+        vix = pd.Series(
+            [np.nan, np.nan, np.nan, 12.0, 15.0],
+            index=dates,
+        )
+        weights = backtest.build_signals(close, vix, (13.0, 20.0, 30.0, 40.0))
+        # 前三天应空仓，避免 NaN 落入高杠杆分支
+        self.assertTrue((weights.iloc[:3] == 0.0).all().all())
+        self.assertAlmostEqual(weights.loc[dates[3], "QQQ"], 0.5)
+        self.assertAlmostEqual(weights.loc[dates[4], "QQQ"], 1.0)
 
 
 class TestPortfolioValueMetrics(unittest.TestCase):
@@ -125,6 +189,17 @@ class TestPortfolioValueMetrics(unittest.TestCase):
         metrics = backtest._portfolio_value_metrics(MultiPortfolio())
         self.assertAlmostEqual(metrics["total_return"], 165.0 / 150.0 - 1.0, places=10)
 
+    def test_total_loss_does_not_produce_complex_annual_return(self):
+        class TotalLossPortfolio:
+            def value(self):
+                return pd.Series([100.0, 50.0, 0.0], index=pd.date_range("2024-01-01", periods=3))
+
+        metrics = backtest._portfolio_value_metrics(TotalLossPortfolio())
+        self.assertAlmostEqual(metrics["total_return"], -1.0)
+        self.assertIsInstance(metrics["annual_return"], float)
+        self.assertLess(metrics["annual_return"], 0.0)
+        self.assertFalse(isinstance(metrics["annual_return"], complex))
+
 
 class TestParseArgs(unittest.TestCase):
     def _run_parse(self, argv):
@@ -133,18 +208,129 @@ class TestParseArgs(unittest.TestCase):
 
     def test_default_thresholds(self):
         args = self._run_parse(["backtest.py"])
-        self.assertEqual(args.thresholds, (13.0, 20.0, 30.0))
+        self.assertEqual(args.thresholds, (13.0, 20.0, 30.0, 40.0))
 
     def test_custom_thresholds(self):
-        args = self._run_parse(["backtest.py", "--thresholds", "15", "25", "35"])
-        self.assertEqual(args.thresholds, (15.0, 25.0, 35.0))
+        args = self._run_parse(["backtest.py", "--thresholds", "15", "25", "35", "45"])
+        self.assertEqual(args.thresholds, (15.0, 25.0, 35.0, 45.0))
 
     def test_unordered_thresholds_exit(self):
         stderr = StringIO()
-        with patch.object(sys, "argv", ["backtest.py", "--thresholds", "30", "20", "13"]):
+        with patch.object(sys, "argv", ["backtest.py", "--thresholds", "40", "30", "20", "13"]):
             with patch.object(sys, "stderr", stderr):
                 with self.assertRaises(SystemExit):
                     backtest.parse_args()
+
+    def test_negative_cash_rejected(self):
+        with patch.object(sys, "argv", ["backtest.py", "--cash", "-1000"]):
+            with self.assertRaises(SystemExit):
+                backtest.parse_args()
+
+    def test_negative_fees_rejected(self):
+        with patch.object(sys, "argv", ["backtest.py", "--fees", "-0.001"]):
+            with self.assertRaises(SystemExit):
+                backtest.parse_args()
+
+    def test_benchmark_defaults_to_qqq(self):
+        args = self._run_parse(["backtest.py"])
+        self.assertEqual(args.benchmark, "QQQ")
+
+    def test_custom_benchmark(self):
+        args = self._run_parse(["backtest.py", "--benchmark", "QLD"])
+        self.assertEqual(args.benchmark, "QLD")
+
+
+class TestRunBacktest(unittest.TestCase):
+    def test_empty_common_index_raises(self):
+        close = pd.DataFrame(
+            {"QQQ": [100.0, 101.0]},
+            index=pd.date_range("2024-01-01", periods=2),
+        )
+        vix = pd.Series(
+            [20.0, 21.0],
+            index=pd.date_range("2025-01-01", periods=2),
+        )
+        with self.assertRaises(ValueError) as ctx:
+            backtest.run_backtest(
+                symbols=["QQQ"],
+                start="2024-01-01",
+                end="2025-01-02",
+                thresholds=(13.0, 20.0, 30.0, 40.0),
+                initial_cash=10000,
+                fees=0.001,
+                slippage=0.001,
+                close=close,
+                vix=vix,
+            )
+        self.assertIn("没有重叠日期", str(ctx.exception))
+
+
+class TestSaveResults(unittest.TestCase):
+    def setUp(self):
+        self.tmpdir = tempfile.TemporaryDirectory()
+        self.output_dir = Path(self.tmpdir.name)
+        patcher = patch.object(backtest, "OUTPUT_DIR", self.output_dir)
+        self.addCleanup(patcher.stop)
+        patcher.start()
+
+    def tearDown(self):
+        self.tmpdir.cleanup()
+
+    def _make_args(self, **overrides):
+        class Args:
+            symbols = ["QQQ"]
+            thresholds = (13.0, 20.0, 30.0, 40.0)
+            cash = 10000.0
+            fees = 0.001
+            slippage = 0.001
+            benchmark = "QQQ"
+
+        args = Args()
+        for k, v in overrides.items():
+            setattr(args, k, v)
+        return args
+
+    def _make_mock_portfolio(self, dates):
+        class MockTrades:
+            def count(self):
+                return pd.Series([0], dtype=int)
+
+            def win_rate(self):
+                return pd.Series([0.0])
+
+        class MockPortfolio:
+            def __init__(self):
+                self.trades = MockTrades()
+
+            def value(self):
+                return pd.Series([10000.0, 10200.0, 10400.0], index=dates)
+
+        return MockPortfolio()
+
+    def test_missing_benchmark_skips_benchmark_curve(self):
+        dates = pd.date_range("2024-01-01", periods=3)
+        close = pd.DataFrame({"QLD": [50.0, 51.0, 52.0]}, index=dates)
+        portfolio = self._make_mock_portfolio(dates)
+        portfolio.close = close
+        args = self._make_args(symbols=["QLD"], benchmark="QQQ")
+        weights = pd.DataFrame({"QLD": [1.0, 1.0, 1.0]}, index=dates)
+        # 不应抛出 KeyError
+        backtest.save_results(portfolio, weights, args, close)
+
+    def test_custom_benchmark_used(self):
+        dates = pd.date_range("2024-01-01", periods=3)
+        close = pd.DataFrame(
+            {"QQQ": [100.0, 110.0, 120.0], "QLD": [50.0, 51.0, 52.0]},
+            index=dates,
+        )
+        portfolio = self._make_mock_portfolio(dates)
+        portfolio.close = close
+        args = self._make_args(benchmark="QLD")
+        weights = pd.DataFrame({"QLD": [1.0, 1.0, 1.0]}, index=dates)
+        backtest.save_results(portfolio, weights, args, close)
+        # 验证 output 目录生成了文件
+        files = list(self.output_dir.glob("vix_leverage_rotation_*.html"))
+        self.assertTrue(len(files) > 0)
 
 
 class TestEtfDataHelpers(unittest.TestCase):
