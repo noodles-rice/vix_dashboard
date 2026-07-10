@@ -1,7 +1,7 @@
-// 三图布局常量（基于容器高度的百分比）
+// 四图布局常量（基于容器高度的百分比）
 const CHART_TITLE_TOP_PCT = 1;
 const CHART_GRID_TOP_PCT = 5;
-const CHART_GRID_HEIGHT_PCT = 26;
+const CHART_GRID_HEIGHT_PCT = 19;
 const CHART_SECTION_GAP_PCT = 1;
 
 // 图表交互与坐标轴常量
@@ -15,11 +15,25 @@ const NDX_LOG_AXIS_PADDING = 1.05;
 const SPX_UP_COLOR = '#f97316';
 const SPX_DOWN_COLOR = '#fbbf24';
 
+// ETF K线配色
+const QQQ_UP_COLOR = '#38bdf8';
+const QQQ_DOWN_COLOR = '#0ea5e9';
+const QLD_UP_COLOR = '#22d3ee';
+const QLD_DOWN_COLOR = '#06b6d4';
+const TQQQ_UP_COLOR = '#f472b6';
+const TQQQ_DOWN_COLOR = '#db2777';
+// TQQQ 模拟数据使用低饱和度/半透明以作区分
+const TQQQ_SIM_UP_COLOR = 'rgba(168, 85, 247, 0.55)';
+const TQQQ_SIM_DOWN_COLOR = 'rgba(139, 92, 246, 0.55)';
+const TQQQ_SIM_BORDER_UP_COLOR = '#c084fc';
+const TQQQ_SIM_BORDER_DOWN_COLOR = '#a78bfa';
+const TQQQ_FIRST_REAL_DATE = '2010-02-11';
+
 const CHART_LAYOUT = (() => {
     const stride = CHART_GRID_TOP_PCT + CHART_GRID_HEIGHT_PCT + CHART_SECTION_GAP_PCT - CHART_TITLE_TOP_PCT;
     return {
-        titleTops: [0, 1, 2].map(i => `${CHART_TITLE_TOP_PCT + i * stride}%`),
-        gridTops: [0, 1, 2].map(i => `${CHART_GRID_TOP_PCT + i * stride}%`),
+        titleTops: [0, 1, 2, 3].map(i => `${CHART_TITLE_TOP_PCT + i * stride}%`),
+        gridTops: [0, 1, 2, 3].map(i => `${CHART_GRID_TOP_PCT + i * stride}%`),
         gridHeight: `${CHART_GRID_HEIGHT_PCT}%`
     };
 })();
@@ -39,6 +53,19 @@ class VIXDashboard {
         this.spxOhlc = [];
         this.spxFlatDots = [];
         this.spxError = null;
+        this.qqqData = [];
+        this.qqqOhlc = [];
+        this.qqqFlatDots = [];
+        this.qqqError = null;
+        this.qldData = [];
+        this.qldOhlc = [];
+        this.qldFlatDots = [];
+        this.qldError = null;
+        this.tqqqData = [];
+        this.tqqqOhlc = [];
+        this.tqqqFlatDots = [];
+        this.tqqqError = null;
+        this.tqqqSimulatedEnd = null;
         this.ndxLogScale = true;
         this.ndxVisible = true;
         this.spxVisible = true;
@@ -386,12 +413,15 @@ class VIXDashboard {
     }
 
     async loadData() {
-        this.showLoading('正在加载 VIX / 纳斯达克100 / 标普500 历史数据...');
+        this.showLoading('正在加载 VIX / 指数 / ETF 历史数据...');
         try {
-            const [vixResponse, ndxResponse, spxResponse] = await Promise.all([
+            const [vixResponse, ndxResponse, spxResponse, qqqResponse, qldResponse, tqqqResponse] = await Promise.all([
                 fetch('data/VIX_History.csv', { cache: 'no-store' }),
                 fetch('data/NDX_History.csv', { cache: 'no-store' }),
-                fetch('data/SPX_History.csv', { cache: 'no-store' })
+                fetch('data/SPX_History.csv', { cache: 'no-store' }),
+                fetch('data/QQQ_History.csv', { cache: 'no-store' }),
+                fetch('data/QLD_History.csv', { cache: 'no-store' }),
+                fetch('data/TQQQ_History.csv', { cache: 'no-store' })
             ]);
 
             if (!vixResponse.ok) {
@@ -406,6 +436,9 @@ class VIXDashboard {
             if (this.data.length === 0) {
                 throw new Error('VIX CSV 解析结果为空');
             }
+
+            // 读取 TQQQ 回填元数据，用于在图表中区分模拟数据
+            await this.loadTqqqMetadata();
 
             this.ohlc = this.data.map(d => [d.open, d.close, d.low, d.high]);
             this.flatDots = this.data
@@ -445,6 +478,11 @@ class VIXDashboard {
                 this.spxError = `标普500 数据加载失败：HTTP ${spxResponse.status}`;
                 this.showSpxWarning(this.spxError);
             }
+
+            // 加载 QQQ / QLD / TQQQ ETF 数据
+            await this.loadEtfResponse(qqqResponse, 'QQQ', 'qqq');
+            await this.loadEtfResponse(qldResponse, 'QLD', 'qld');
+            await this.loadEtfResponse(tqqqResponse, 'TQQQ', 'tqqq');
 
             this.hideLoading();
             this.showLoading('正在计算历史百分位...');
@@ -511,6 +549,70 @@ class VIXDashboard {
         this.spxOhlc = aligned.ohlc;
         this.spxFlatDots = aligned.flatDots;
         this.spxPrevCloses = aligned.prevCloses;
+    }
+
+    async loadEtfResponse(response, label, key) {
+        const hideWarning = () => {
+            const elem = document.getElementById(`${key}-warning`);
+            if (elem) elem.style.display = 'none';
+        };
+        const showWarning = (message) => {
+            const elem = document.getElementById(`${key}-warning`);
+            if (elem) {
+                elem.textContent = message;
+                elem.style.display = 'block';
+            }
+        };
+
+        if (response.ok) {
+            try {
+                const text = await response.text();
+                const parsed = VIXDashboardCore.parseCSV(text);
+                this[`${key}Data`] = parsed;
+                const aligned = this.alignIndexToVix(parsed);
+                this[`${key}Ohlc`] = aligned.ohlc;
+                this[`${key}FlatDots`] = aligned.flatDots;
+                this[`${key}PrevCloses`] = aligned.prevCloses;
+                this[`${key}Error`] = null;
+                hideWarning();
+            } catch (err) {
+                console.warn(`[VIX Dashboard] ${label} parse failed:`, err);
+                this[`${key}Error`] = `${label} 数据解析失败：` + err.message;
+                showWarning(this[`${key}Error`]);
+            }
+        } else {
+            console.warn(`[VIX Dashboard] ${label} load failed:`, response.status);
+            this[`${key}Error`] = `${label} 数据加载失败：HTTP ${response.status}`;
+            showWarning(this[`${key}Error`]);
+        }
+    }
+
+    async loadTqqqMetadata() {
+        try {
+            const response = await fetch('data/etf_metadata.json', { cache: 'no-store' });
+            if (!response.ok) {
+                this.tqqqSimulatedEnd = this.deriveSimulatedEndFallback();
+                return;
+            }
+            const metadata = await response.json();
+            const tqqqMeta = metadata && metadata.TQQQ;
+            if (tqqqMeta && tqqqMeta.backfilled && tqqqMeta.backfill_end) {
+                this.tqqqSimulatedEnd = tqqqMeta.backfill_end;
+            } else {
+                this.tqqqSimulatedEnd = this.deriveSimulatedEndFallback();
+            }
+        } catch (err) {
+            console.warn('[VIX Dashboard] 无法读取 TQQQ 回填元数据:', err);
+            this.tqqqSimulatedEnd = this.deriveSimulatedEndFallback();
+        }
+    }
+
+    deriveSimulatedEndFallback() {
+        // 若元数据缺失，以 TQQQ 上市前一天作为模拟/真实分界兜底
+        const [year, month, day] = TQQQ_FIRST_REAL_DATE.split('-').map(Number);
+        const date = new Date(Date.UTC(year, month - 1, day));
+        date.setUTCDate(date.getUTCDate() - 1);
+        return date.toISOString().slice(0, 10);
     }
 
     computeEventAnnotations() {
@@ -811,6 +913,60 @@ class VIXDashboard {
         const spxSeriesData = spxOhlc.map(v => v === null ? '-' : v);
         const spxFlatDots = this.spxFlatDots;
 
+        // ETF 收益率对比：以三只 ETF 都有数据的第一个交易日为共同起点，
+        // 按收盘价归一化为净值 1，后续日期显示相对起点的累计收益。
+        const simEndDate = this.tqqqSimulatedEnd ? new Date(Date.UTC(
+            parseInt(this.tqqqSimulatedEnd.split('-')[0]),
+            parseInt(this.tqqqSimulatedEnd.split('-')[1]) - 1,
+            parseInt(this.tqqqSimulatedEnd.split('-')[2])
+        )) : null;
+
+        let etfBaseIdx = -1;
+        for (let i = 0; i < this.data.length; i++) {
+            if (this.qqqOhlc[i] && this.qldOhlc[i] && this.tqqqOhlc[i]) {
+                etfBaseIdx = i;
+                break;
+            }
+        }
+
+        const qqqBase = etfBaseIdx >= 0 ? this.qqqOhlc[etfBaseIdx][1] : null;
+        const qldBase = etfBaseIdx >= 0 ? this.qldOhlc[etfBaseIdx][1] : null;
+        const tqqqBase = etfBaseIdx >= 0 ? this.tqqqOhlc[etfBaseIdx][1] : null;
+
+        const normalizeEtfReturn = (ohlc, baseClose) => {
+            if (!baseClose) return ohlc.map(() => '-');
+            return ohlc.map((candle, i) => (candle && i >= etfBaseIdx) ? candle[1] / baseClose : '-');
+        };
+
+        const qqqReturnData = normalizeEtfReturn(this.qqqOhlc, qqqBase);
+        const qldReturnData = normalizeEtfReturn(this.qldOhlc, qldBase);
+
+        const tqqqRealData = [];
+        const tqqqSimData = [];
+        for (let i = 0; i < this.data.length; i++) {
+            const candle = this.tqqqOhlc[i];
+            if (!candle || i < etfBaseIdx) {
+                tqqqRealData.push('-');
+                tqqqSimData.push('-');
+                continue;
+            }
+            const value = candle[1] / tqqqBase;
+            const date = this.data[i].date;
+            const isSimulated = simEndDate && date <= simEndDate;
+            if (isSimulated) {
+                tqqqRealData.push('-');
+                tqqqSimData.push(value);
+            } else {
+                tqqqRealData.push(value);
+                tqqqSimData.push('-');
+            }
+        }
+
+        // 供 tooltip 计算收益率使用
+        this.qqqReturnBase = qqqBase;
+        this.qldReturnBase = qldBase;
+        this.tqqqReturnBase = tqqqBase;
+
         const currentOption = this.chart.getOption() || {};
         const currentDataZoom = currentOption.dataZoom && currentOption.dataZoom[0];
         const zoomState = currentDataZoom ? {
@@ -860,8 +1016,32 @@ class VIXDashboard {
                         fontSize: 15,
                         fontWeight: 'normal'
                     }
+                },
+                {
+                    text: 'QQQ / QLD / TQQQ 收益率对比（起点=1）',
+                    left: 'center',
+                    top: CHART_LAYOUT.titleTops[3],
+                    textStyle: {
+                        color: c.textPrimary,
+                        fontSize: 15,
+                        fontWeight: 'normal'
+                    }
                 }
             ],
+            legend: {
+                data: [
+                    'QQQ',
+                    'QLD',
+                    'TQQQ',
+                    'TQQQ（模拟）'
+                ],
+                top: `${parseFloat(CHART_LAYOUT.titleTops[3]) + 2}%`,
+                right: '2%',
+                textStyle: { color: c.textMuted, fontSize: 11 },
+                itemWidth: 14,
+                itemHeight: 10,
+                selectedMode: 'multiple'
+            },
             axisPointer: {
                 link: [{ xAxisIndex: 'all' }],
                 lineStyle: {
@@ -898,17 +1078,30 @@ class VIXDashboard {
                     const ndxValues = this.ndxOhlc[idx];
                     const spxValues = this.spxOhlc[idx];
 
-                    const formatIndexLine = (values, prevClose, upColor, downColor, label) => {
+                    const formatIndexLine = (values, prevClose, upColor, downColor, label, decimals = 2) => {
                         const [o, cl, l, h] = values;
                         const color = prevClose !== null
                             ? (cl >= prevClose ? upColor : downColor)
                             : (cl >= o ? upColor : downColor);
                         const changePct = prevClose !== null ? ((cl - prevClose) / prevClose) * 100 : null;
                         const changeText = changePct !== null
-                            ? ` 涨跌幅: <strong>${changePct >= 0 ? '+' : ''}${changePct.toFixed(2)}%</strong>`
+                            ? ` 涨跌幅: <strong>${changePct >= 0 ? '+' : ''}${changePct.toFixed(decimals)}%</strong>`
                             : '';
-                        return `<div style="color:${color};">${label} 开: <strong>${o.toFixed(2)}</strong> 高: <strong>${h.toFixed(2)}</strong> 低: <strong>${l.toFixed(2)}</strong> 收: <strong>${cl.toFixed(2)}</strong>${changeText}</div>`;
+                        return `<div style="color:${color};">${label} 开: <strong>${o.toFixed(decimals)}</strong> 高: <strong>${h.toFixed(decimals)}</strong> 低: <strong>${l.toFixed(decimals)}</strong> 收: <strong>${cl.toFixed(decimals)}</strong>${changeText}</div>`;
                     };
+
+                    const formatReturnLine = (values, baseClose, color, label) => {
+                        if (!values || !baseClose) return '';
+                        const close = values[1];
+                        const nv = close / baseClose;
+                        const ret = (nv - 1) * 100;
+                        return `<div style="color:${color};">${label} 净值: <strong>${nv.toFixed(2)}</strong> ` +
+                            `(${ret >= 0 ? '+' : ''}${ret.toFixed(2)}%)</div>`;
+                    };
+
+                    const qqqValues = this.qqqOhlc[idx];
+                    const qldValues = this.qldOhlc[idx];
+                    const tqqqValues = this.tqqqOhlc[idx];
 
                     let html = `<div style="font-weight:700;margin-bottom:6px;">${date}</div>`;
                     if (d) {
@@ -926,11 +1119,22 @@ class VIXDashboard {
                         const spxPrevClose = this.spxPrevCloses ? this.spxPrevCloses[idx] : null;
                         html += formatIndexLine(spxValues, spxPrevClose, SPX_UP_COLOR, SPX_DOWN_COLOR, 'SPX');
                     }
+                    if (Array.isArray(qqqValues)) {
+                        html += formatReturnLine(qqqValues, this.qqqReturnBase, QQQ_UP_COLOR, 'QQQ');
+                    }
+                    if (Array.isArray(qldValues)) {
+                        html += formatReturnLine(qldValues, this.qldReturnBase, QLD_UP_COLOR, 'QLD');
+                    }
+                    if (Array.isArray(tqqqValues)) {
+                        const isSimulated = simEndDate && this.data[idx].date <= simEndDate;
+                        const label = isSimulated ? 'TQQQ（模拟）' : 'TQQQ';
+                        html += formatReturnLine(tqqqValues, this.tqqqReturnBase, TQQQ_UP_COLOR, label);
+                    }
                     return html;
                 }
             },
-            // 三个 grid 使用相同的 right 边距，确保时间轴长度一致；
-            // 底部 grid 需要容纳右侧的 SPX 纵轴，因此统一放大而非单独缩小。
+            // 四个 grid 使用相同的 right 边距，确保时间轴长度一致；
+            // 底部两个 grid 需要容纳右侧纵轴，因此统一放大而非单独缩小。
             grid: [
                 {
                     left: GRID_LEFT_MARGIN,
@@ -948,6 +1152,12 @@ class VIXDashboard {
                     left: GRID_LEFT_MARGIN,
                     right: '8%',
                     top: CHART_LAYOUT.gridTops[2],
+                    height: CHART_LAYOUT.gridHeight
+                },
+                {
+                    left: GRID_LEFT_MARGIN,
+                    right: '8%',
+                    top: CHART_LAYOUT.gridTops[3],
                     height: CHART_LAYOUT.gridHeight
                 }
             ],
@@ -974,6 +1184,14 @@ class VIXDashboard {
                     boundaryGap: true,
                     data: dates,
                     gridIndex: 2,
+                    axisLine: { lineStyle: { color: c.textSubtle } },
+                    axisLabel: { show: false }
+                },
+                {
+                    type: 'category',
+                    boundaryGap: true,
+                    data: dates,
+                    gridIndex: 3,
                     axisLine: { lineStyle: { color: c.textSubtle } },
                     axisLabel: { color: c.textMuted }
                 }
@@ -1029,12 +1247,25 @@ class VIXDashboard {
                     splitLine: { show: false },
                     nameTextStyle: { color: this.spxVisible ? c.secondary : c.textMuted },
                     logBase: 10
+                },
+                {
+                    type: this.ndxLogScale ? 'log' : 'value',
+                    name: '相对净值',
+                    gridIndex: 3,
+                    position: 'left',
+                    scale: true,
+                    triggerEvent: true,
+                    axisLine: { show: true, lineStyle: { color: c.primary } },
+                    axisLabel: { color: c.textMuted, formatter: value => value.toFixed(2) },
+                    splitLine: { lineStyle: { color: c.border, type: 'dashed' } },
+                    nameTextStyle: { color: c.primary },
+                    logBase: 10
                 }
             ],
             dataZoom: [
                 {
                     type: 'inside',
-                    xAxisIndex: [0, 1, 2],
+                    xAxisIndex: [0, 1, 2, 3],
                     ...zoomState,
                     zoomOnMouseWheel: true,
                     moveOnMouseMove: true,
@@ -1042,7 +1273,7 @@ class VIXDashboard {
                 },
                 {
                     type: 'slider',
-                    xAxisIndex: [0, 1, 2],
+                    xAxisIndex: [0, 1, 2, 3],
                     ...zoomState,
                     bottom: '2%',
                     height: 24,
@@ -1185,6 +1416,58 @@ class VIXDashboard {
                     itemStyle: { color: c.textMuted },
                     tooltip: { show: false },
                     emphasis: { scale: false }
+                },
+                {
+                    name: 'QQQ',
+                    type: 'line',
+                    data: qqqReturnData,
+                    xAxisIndex: 3,
+                    yAxisIndex: 4,
+                    symbol: 'none',
+                    smooth: false,
+                    lineStyle: { color: QQQ_UP_COLOR, width: 1.5 },
+                    itemStyle: { color: QQQ_UP_COLOR }
+                },
+                {
+                    name: 'QLD',
+                    type: 'line',
+                    data: qldReturnData,
+                    xAxisIndex: 3,
+                    yAxisIndex: 4,
+                    symbol: 'none',
+                    smooth: false,
+                    lineStyle: { color: QLD_UP_COLOR, width: 1.5 },
+                    itemStyle: { color: QLD_UP_COLOR }
+                },
+                {
+                    name: 'TQQQ',
+                    type: 'line',
+                    data: tqqqRealData,
+                    xAxisIndex: 3,
+                    yAxisIndex: 4,
+                    symbol: 'none',
+                    smooth: false,
+                    lineStyle: { color: TQQQ_UP_COLOR, width: 1.5 },
+                    itemStyle: { color: TQQQ_UP_COLOR }
+                },
+                {
+                    name: 'TQQQ（模拟）',
+                    type: 'line',
+                    data: tqqqSimData,
+                    xAxisIndex: 3,
+                    yAxisIndex: 4,
+                    symbol: 'none',
+                    smooth: false,
+                    lineStyle: { color: TQQQ_SIM_BORDER_UP_COLOR, width: 1.5, type: 'dashed' },
+                    itemStyle: { color: TQQQ_SIM_BORDER_UP_COLOR },
+                    markArea: simEndDate ? {
+                        silent: true,
+                        itemStyle: { color: 'rgba(168, 85, 247, 0.08)' },
+                        data: [[
+                            { xAxis: 0 },
+                            { xAxis: Math.max(0, this.data.findIndex(d => d.date > simEndDate) - 1) }
+                        ]]
+                    } : null
                 }
             ]
         };
@@ -1269,12 +1552,16 @@ class VIXDashboard {
             }]
         };
 
-        // NDX / SPX 对数坐标：手动收紧纵轴范围
+        // NDX / SPX / ETF 对数坐标：手动收紧纵轴范围
         if (this.ndxLogScale) {
             let ndxMin = Infinity;
             let ndxMax = -Infinity;
             let spxMin = Infinity;
             let spxMax = -Infinity;
+            let etfMin = Infinity;
+            let etfMax = -Infinity;
+            const etfBases = [this.qqqReturnBase, this.qldReturnBase, this.tqqqReturnBase];
+            const etfOhlcs = [this.qqqOhlc, this.qldOhlc, this.tqqqOhlc];
             for (let i = startIdx; i <= endIdx; i++) {
                 const ndxCandle = this.ndxOhlc[i];
                 if (ndxCandle) {
@@ -1288,20 +1575,31 @@ class VIXDashboard {
                     if (low < spxMin) spxMin = low;
                     if (high > spxMax) spxMax = high;
                 }
+                for (let k = 0; k < 3; k++) {
+                    const candle = etfOhlcs[k][i];
+                    const base = etfBases[k];
+                    if (candle && base) {
+                        const nv = candle[1] / base;
+                        if (nv < etfMin) etfMin = nv;
+                        if (nv > etfMax) etfMax = nv;
+                    }
+                }
             }
-            const yAxis = [{}, { min: 0, max: PERCENTILE_AXIS_MAX }];
-            if (ndxMin <= 0 && ndxMin !== Infinity) {
-                console.warn('NDX 可见区间存在非正价格，无法收紧对数纵轴:', ndxMin);
-            }
-            yAxis.push(ndxMin > 0
-                ? { min: ndxMin / NDX_LOG_AXIS_PADDING, max: ndxMax * NDX_LOG_AXIS_PADDING }
-                : {});
-            if (spxMin <= 0 && spxMin !== Infinity) {
-                console.warn('SPX 可见区间存在非正价格，无法收紧对数纵轴:', spxMin);
-            }
-            yAxis.push(spxMin > 0
-                ? { min: spxMin / NDX_LOG_AXIS_PADDING, max: spxMax * NDX_LOG_AXIS_PADDING }
-                : {});
+            const makeLogRange = (min, max, label) => {
+                if (min <= 0 && min !== Infinity) {
+                    console.warn(`${label} 可见区间存在非正净值，无法收紧对数纵轴:`, min);
+                }
+                return min > 0
+                    ? { min: min / NDX_LOG_AXIS_PADDING, max: max * NDX_LOG_AXIS_PADDING }
+                    : {};
+            };
+            const yAxis = [
+                {},
+                { min: 0, max: PERCENTILE_AXIS_MAX },
+                makeLogRange(ndxMin, ndxMax, 'NDX'),
+                makeLogRange(spxMin, spxMax, 'SPX'),
+                makeLogRange(etfMin, etfMax, 'ETF')
+            ];
             updateOption.yAxis = yAxis;
         }
 

@@ -3,7 +3,7 @@
 ## MA150 + VIX≤30 满仓 TQQQ
 
 ### 策略逻辑
-- **买入/持仓条件**：`QQQ 收盘价 > MA150` 且 `VIX 收盘价 ≤ 30` 时，满仓 TQQQ（TQQQ 上市前按回退链自动降级为 QLD → QQQ）。
+- **买入/持仓条件**：`QQQ 收盘价 > MA150` 且 `VIX 收盘价 ≤ 30` 时，满仓 TQQQ（`run_ma_strategy.py` 本身不实现标的回退链；`scripts/backtest.py` 才支持 TQQQ → QLD → QQQ 回退）。
 - **卖出/空仓条件**：当 `QQQ 收盘价 ≤ MA150` 或 `VIX 收盘价 > 30` 时，次日开盘清仓 TQQQ，转为空仓。
 - **执行延迟**：信号基于当日收盘计算，次日执行（`shift(1)`），避免前视偏差。
 
@@ -62,3 +62,18 @@ python scripts/run_ma_strategy.py \
 ### 备注
 - 回测脚本：`scripts/run_ma_strategy.py`
 - 生成时间：2026-07-10
+- `run_ma_strategy.py` 未实现标的回退链；本次记录生成时，若 `data/TQQQ_History.csv` 尚未回填，上市前 TQQQ 列将缺失。`scripts/backtest.py` 才支持 TQQQ → QLD → QQQ 回退。
+
+---
+
+## 数据更新：TQQQ 回填（2026-07-10）
+
+为与 QLD 时间轴对齐，通过 `scripts/backfill_tqqq.py` 对 TQQQ 进行了历史回填：
+
+- **回填区间**：2006-06-21 ~ 2010-02-10
+- **方法**：基于上市后 TQQQ 与 QQQ 的日收益线性回归 `R_tqqq = α + β × R_qqq` 合成 OHLC
+- **回归系数**：α ≈ -0.00018，β ≈ 2.957，R² ≈ 0.998
+- **锚点**：2010-02-11 真实 TQQQ 收盘价
+- **影响**：后续 rerun `scripts/run_ma_strategy.py` 时，上述区间内策略将直接持有合成 TQQQ，不再降级为 QLD/QQQ。历史记录中的绩效数字（基于降级规则）可能与新 rerun 结果存在差异。
+
+> 合成数据已写入 `data/TQQQ_History.csv`，元信息记录在 `data/etf_metadata.json` 的 `TQQQ` 节点中。

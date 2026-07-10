@@ -124,3 +124,17 @@ source /root/vix/.venv/bin/activate && python scripts/optimize.py --metric calma
 - 纳斯达克100：Yahoo Finance `^NDX`（通过 `yfinance` 拉取）
 - QQQ / QLD / TQQQ：Yahoo Finance（通过 `yfinance` 拉取）
 - 数据字段：`DATE`, `OPEN`, `HIGH`, `LOW`, `CLOSE`
+
+### TQQQ 历史数据回填说明
+
+TQQQ 于 2010-02-11 上市。为与 QLD（2006-06-21 上市）时间轴对齐，项目中 `data/TQQQ_History.csv` 的 **2006-06-21 至 2010-02-10** 区间采用合成数据：
+
+- 基于上市后 TQQQ 与 QQQ 的日收益线性回归 `R_tqqq = α + β × R_qqq` 生成（当前 α≈-0.00018，β≈2.957，R²≈0.998）
+- 锚定 2010-02-11 真实 TQQQ 收盘价，向前递推合成 CLOSE
+- OHLC 按 QQQ 当日价格形态缩放生成
+
+回填脚本：`scripts/backfill_tqqq.py`
+
+> 注意：
+> - 2006-06-21 至 2010-02-10 的 TQQQ 数据为基于统计关系的合成数据，仅用于与 QLD 对齐的回测分析，不代表真实历史价格。
+> - 由于 `data/*_History.csv` 与 `data/etf_metadata.json` 被 `.gitignore` 排除，新 clone 或清理数据后需先执行上述脚本，才能在看板/回测中使用回填后的 TQQQ 数据。
