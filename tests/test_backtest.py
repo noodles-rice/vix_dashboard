@@ -147,6 +147,112 @@ class TestBuildSignals(unittest.TestCase):
         self.assertAlmostEqual(weights.loc[dates[3], "QQQ"], 0.5)
         self.assertAlmostEqual(weights.loc[dates[4], "QQQ"], 1.0)
 
+    def test_single_threshold_mapping(self):
+        close, dates = self._make_data(n=4)
+        # 1 个阈值：2 档仓位
+        vix = pd.Series([10.0, 20.0, 25.0, 35.0], index=dates)
+        weights = backtest.build_signals(close, vix, (20.0,))
+        # v < 20 -> 0.5x QQQ；v >= 20 -> 1.0x QQQ
+        self.assertAlmostEqual(weights.loc[dates[0], "QQQ"], 0.5)
+        self.assertAlmostEqual(weights.loc[dates[1], "QQQ"], 1.0)
+        self.assertAlmostEqual(weights.loc[dates[2], "QQQ"], 1.0)
+        self.assertAlmostEqual(weights.loc[dates[3], "QQQ"], 1.0)
+
+    def test_three_thresholds_mapping(self):
+        close, dates = self._make_data(n=5)
+        # 3 个阈值：4 档仓位
+        vix = pd.Series([10.0, 15.0, 22.0, 28.0, 35.0], index=dates)
+        weights = backtest.build_signals(close, vix, (13.0, 20.0, 30.0))
+        # v < 13 -> 0.5x QQQ
+        self.assertAlmostEqual(weights.loc[dates[0], "QQQ"], 0.5)
+        # 13 <= v < 20 -> 1.0x QQQ
+        self.assertAlmostEqual(weights.loc[dates[1], "QQQ"], 1.0)
+        # 20 <= v <= 30 -> 1.5x (QLD + QQQ)
+        self.assertAlmostEqual(weights.loc[dates[2], "QLD"], 0.5)
+        self.assertAlmostEqual(weights.loc[dates[2], "QQQ"], 0.5)
+        self.assertAlmostEqual(weights.loc[dates[3], "QLD"], 0.5)
+        self.assertAlmostEqual(weights.loc[dates[3], "QQQ"], 0.5)
+        # v > 30 -> 2.0x QLD
+        self.assertAlmostEqual(weights.loc[dates[4], "QLD"], 1.0)
+
+    def test_five_thresholds_mapping(self):
+        close, dates = self._make_data(n=6)
+        # 5 个阈值：6 档仓位
+        vix = pd.Series([8.0, 11.0, 15.0, 25.0, 35.0, 45.0], index=dates)
+        weights = backtest.build_signals(close, vix, (10.0, 13.0, 20.0, 30.0, 40.0))
+        # v < 10 -> 0.5x QQQ
+        self.assertAlmostEqual(weights.loc[dates[0], "QQQ"], 0.5)
+        # 10 <= v < 13 -> 1.0x QQQ
+        self.assertAlmostEqual(weights.loc[dates[1], "QQQ"], 1.0)
+        # 13 <= v < 20 -> 1.5x (QLD + QQQ)
+        self.assertAlmostEqual(weights.loc[dates[2], "QLD"], 0.5)
+        self.assertAlmostEqual(weights.loc[dates[2], "QQQ"], 0.5)
+        # 20 <= v <= 30 -> 2.0x QLD
+        self.assertAlmostEqual(weights.loc[dates[3], "QLD"], 1.0)
+        # 30 < v <= 40 -> 2.5x (TQQQ + QLD)
+        self.assertAlmostEqual(weights.loc[dates[4], "TQQQ"], 0.5)
+        self.assertAlmostEqual(weights.loc[dates[4], "QLD"], 0.5)
+        # v > 40 -> 3.0x TQQQ
+        self.assertAlmostEqual(weights.loc[dates[5], "TQQQ"], 1.0)
+
+    def test_excessive_leverage_capped_to_full_tqqq(self):
+        close, dates = self._make_data(n=2)
+        # 6 个阈值产生最大 3.5x 档位，应限制为满仓 TQQQ
+        vix = pd.Series([60.0, 60.0], index=dates)
+        weights = backtest.build_signals(close, vix, (10.0, 13.0, 20.0, 30.0, 40.0, 50.0))
+        self.assertAlmostEqual(weights.loc[dates[0], "TQQQ"], 1.0)
+        self.assertAlmostEqual(weights.loc[dates[1], "TQQQ"], 1.0)
+
+    def test_custom_allocations_override_default(self):
+        close, dates = self._make_data(n=3)
+        # 1 个阈值：2 个区间，自定义分配
+        vix = pd.Series([10.0, 20.0, 30.0], index=dates)
+        allocations = [
+            [("QQQ", 0.25), ("QLD", 0.25)],
+            [("TQQQ", 0.5)],
+        ]
+        weights = backtest.build_signals(close, vix, (20.0,), allocations=allocations)
+        # v < 20: QQQ 0.25 + QLD 0.25
+        self.assertAlmostEqual(weights.loc[dates[0], "QQQ"], 0.25)
+        self.assertAlmostEqual(weights.loc[dates[0], "QLD"], 0.25)
+        # v >= 20: TQQQ 0.5
+        self.assertAlmostEqual(weights.loc[dates[1], "TQQQ"], 0.5)
+        self.assertAlmostEqual(weights.loc[dates[2], "TQQQ"], 0.5)
+
+    def test_custom_allocations_partial_cash(self):
+        close, dates = self._make_data(n=2)
+        vix = pd.Series([10.0, 30.0], index=dates)
+        # 权重和 0.3，剩余现金
+        allocations = [
+            [("QQQ", 0.3)],
+            [("QLD", 0.3)],
+        ]
+        weights = backtest.build_signals(close, vix, (20.0,), allocations=allocations)
+        self.assertAlmostEqual(weights.loc[dates[0], "QQQ"], 0.3)
+        self.assertAlmostEqual(weights.loc[dates[1], "QLD"], 0.3)
+        self.assertAlmostEqual(weights.sum(axis=1).iloc[0], 0.3)
+        self.assertAlmostEqual(weights.sum(axis=1).iloc[1], 0.3)
+
+    def test_invalid_allocations_length_raises(self):
+        close, dates = self._make_data(n=2)
+        vix = pd.Series([10.0, 30.0], index=dates)
+        # 1 个阈值需要 2 个分配，但只给 1 个
+        allocations = [[("QQQ", 1.0)]]
+        with self.assertRaises(ValueError) as ctx:
+            backtest.build_signals(close, vix, (20.0,), allocations=allocations)
+        self.assertIn("分配数量", str(ctx.exception))
+
+    def test_invalid_allocations_weight_raises(self):
+        close, dates = self._make_data(n=2)
+        vix = pd.Series([10.0, 30.0], index=dates)
+        allocations = [
+            [("QQQ", 0.6), ("QLD", 0.6)],
+            [("QQQ", 0.5)],
+        ]
+        with self.assertRaises(ValueError) as ctx:
+            backtest.build_signals(close, vix, (20.0,), allocations=allocations)
+        self.assertIn("权重和", str(ctx.exception))
+
 
 class TestPortfolioValueMetrics(unittest.TestCase):
     def test_flat_value_returns_zero_metrics(self):
@@ -231,13 +337,64 @@ class TestParseArgs(unittest.TestCase):
             with self.assertRaises(SystemExit):
                 backtest.parse_args()
 
-    def test_benchmark_defaults_to_qqq(self):
+    def test_benchmark_defaults_to_all_three(self):
         args = self._run_parse(["backtest.py"])
-        self.assertEqual(args.benchmark, "QQQ")
+        self.assertEqual(args.benchmark, ["QQQ", "QLD", "TQQQ"])
 
     def test_custom_benchmark(self):
         args = self._run_parse(["backtest.py", "--benchmark", "QLD"])
-        self.assertEqual(args.benchmark, "QLD")
+        self.assertEqual(args.benchmark, ["QLD"])
+
+    def test_multiple_benchmarks(self):
+        args = self._run_parse(["backtest.py", "--benchmark", "QQQ", "QLD"])
+        self.assertEqual(args.benchmark, ["QQQ", "QLD"])
+
+    def test_variable_length_thresholds(self):
+        args = self._run_parse(["backtest.py", "--thresholds", "10", "20", "30"])
+        self.assertEqual(args.thresholds, (10.0, 20.0, 30.0))
+
+    def test_single_threshold(self):
+        args = self._run_parse(["backtest.py", "--thresholds", "20"])
+        self.assertEqual(args.thresholds, (20.0,))
+
+    def test_unordered_thresholds_exit_with_variable_length(self):
+        with patch.object(sys, "argv", ["backtest.py", "--thresholds", "30", "20", "10"]):
+            with self.assertRaises(SystemExit):
+                backtest.parse_args()
+
+    def test_duplicate_thresholds_exit(self):
+        with patch.object(sys, "argv", ["backtest.py", "--thresholds", "20", "20", "30"]):
+            with self.assertRaises(SystemExit):
+                backtest.parse_args()
+
+    def test_custom_allocations_parsed(self):
+        args = self._run_parse([
+            "backtest.py",
+            "--thresholds", "20", "30",
+            "--allocations", "QQQ:1.0", "QLD:0.5,QQQ:0.5", "TQQQ:1.0",
+        ])
+        self.assertEqual(len(args.allocations), 3)
+        self.assertEqual(args.allocations[0], [("QQQ", 1.0)])
+        self.assertEqual(args.allocations[1], [("QLD", 0.5), ("QQQ", 0.5)])
+        self.assertEqual(args.allocations[2], [("TQQQ", 1.0)])
+
+    def test_allocations_wrong_count_exit(self):
+        with patch.object(sys, "argv", [
+            "backtest.py",
+            "--thresholds", "20", "30",
+            "--allocations", "QQQ:1.0", "QLD:1.0",
+        ]):
+            with self.assertRaises(SystemExit):
+                backtest.parse_args()
+
+    def test_allocations_invalid_format_exit(self):
+        with patch.object(sys, "argv", [
+            "backtest.py",
+            "--thresholds", "20",
+            "--allocations", "QQQ_1.0", "TQQQ:1.0",
+        ]):
+            with self.assertRaises(SystemExit):
+                backtest.parse_args()
 
 
 class TestRunBacktest(unittest.TestCase):
@@ -283,7 +440,8 @@ class TestSaveResults(unittest.TestCase):
             cash = 10000.0
             fees = 0.001
             slippage = 0.001
-            benchmark = "QQQ"
+            benchmark = ["QQQ"]
+            allocations = None
 
         args = Args()
         for k, v in overrides.items():
@@ -331,6 +489,55 @@ class TestSaveResults(unittest.TestCase):
         # 验证 output 目录生成了文件
         files = list(self.output_dir.glob("vix_leverage_rotation_*.html"))
         self.assertTrue(len(files) > 0)
+
+    def test_multiple_benchmarks_drawn(self):
+        dates = pd.date_range("2024-01-01", periods=3)
+        close = pd.DataFrame(
+            {"QQQ": [100.0, 110.0, 120.0], "QLD": [50.0, 51.0, 52.0]},
+            index=dates,
+        )
+        portfolio = self._make_mock_portfolio(dates)
+        portfolio.close = close
+        args = self._make_args(benchmark=["QQQ", "QLD"])
+        weights = pd.DataFrame({"QQQ": [1.0, 1.0, 1.0]}, index=dates)
+        # 不应抛出异常
+        backtest.save_results(portfolio, weights, args, close)
+        files = list(self.output_dir.glob("vix_leverage_rotation_*.html"))
+        self.assertTrue(len(files) > 0)
+
+    def test_html_includes_config_panel(self):
+        dates = pd.date_range("2024-01-01", periods=3)
+        close = pd.DataFrame({"QQQ": [100.0, 110.0, 120.0]}, index=dates)
+        portfolio = self._make_mock_portfolio(dates)
+        portfolio.close = close
+        args = self._make_args()
+        weights = pd.DataFrame({"QQQ": [1.0, 1.0, 1.0]}, index=dates)
+        backtest.save_results(portfolio, weights, args, close)
+        files = list(self.output_dir.glob("vix_leverage_rotation_*.html"))
+        self.assertTrue(len(files) > 0)
+        html = files[0].read_text(encoding="utf-8")
+        self.assertIn("策略配置", html)
+        self.assertIn("区间持仓配置", html)
+        self.assertIn("VIX 阈值", html)
+        self.assertIn("回测标的", html)
+
+
+class TestRegimeLabel(unittest.TestCase):
+    def test_four_threshold_boundary_labels(self):
+        thresholds = (13.0, 20.0, 30.0, 40.0)
+        self.assertEqual(backtest._regime_label(0, thresholds), "VIX < 13.0")
+        self.assertEqual(backtest._regime_label(1, thresholds), "13.0 <= VIX < 20.0")
+        self.assertEqual(backtest._regime_label(2, thresholds), "20.0 <= VIX <= 30.0")
+        self.assertEqual(backtest._regime_label(3, thresholds), "30.0 <= VIX <= 40.0")
+        self.assertEqual(backtest._regime_label(4, thresholds), "VIX > 40.0")
+
+    def test_single_threshold_labels(self):
+        thresholds = (20.0,)
+        self.assertEqual(backtest._regime_label(0, thresholds), "VIX < 20.0")
+        self.assertEqual(backtest._regime_label(1, thresholds), "VIX >= 20.0")
+
+    def test_empty_thresholds_label(self):
+        self.assertEqual(backtest._regime_label(0, ()), "所有 VIX")
 
 
 class TestEtfDataHelpers(unittest.TestCase):

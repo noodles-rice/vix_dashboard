@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 """基于 VectorBT 的 VIX 驱动 QQQ/QLD/TQQQ 杠杆轮动回测。
 
-策略逻辑示例（可自定义）：
+策略逻辑示例（默认 4 阈值 13/20/30/40）：
 - VIX < 13：半仓 QQQ（0.5 倍）
 - 13 <= VIX < 20：满仓 QQQ（1 倍）
-- 20 < VIX <= 30：半仓 QLD + 半仓 QQQ（1.5 倍）
+- 20 <= VIX <= 30：半仓 QLD + 半仓 QQQ（1.5 倍）
 - 30 < VIX <= 40：满仓 QLD（2 倍）
 - VIX > 40：半仓 QLD + 半仓 TQQQ（2.5 倍）
+
+阈值数量可任意指定：N 个阈值对应 N+1 个档位，杠杆从 0.5x 起每档递增 0.5x。
 
 标的缺失时按以下链条回退：TQQQ -> QLD -> QQQ -> 空仓，QLD -> QQQ -> 空仓。
 
@@ -17,11 +19,13 @@
 from __future__ import annotations
 
 import argparse
+import html
 import json
 import sys
 from datetime import datetime
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import plotly.subplots as sp
@@ -323,13 +327,135 @@ def _resolve_asset(asset, close_row):
     return None
 
 
-def build_signals(close, vix, thresholds):
+def _regime_from_vix(vix, thresholds):
+    """根据 VIX 值与阈值序列返回区间索引（0..N，N 为阈值数量）。
+
+    划分规则与历史 4 阈值行为保持一致：
+    - 第 0 区间：v < thresholds[0]
+    - 第 1 区间：v < thresholds[1]（当阈值数量 >= 2）
+    - 第 i 区间（2 <= i < N）：v <= thresholds[i]
+    - 第 N 区间：剩余所有值
+    """
+    if not thresholds:
+        return pd.Series(0, index=vix.index)
+
+    n = len(thresholds)
+    conditions = [vix < thresholds[0]]
+    choices = [0]
+
+    if n >= 2:
+        conditions.append(vix < thresholds[1])
+        choices.append(1)
+        for i in range(2, n):
+            conditions.append(vix <= thresholds[i])
+            choices.append(i)
+
+    conditions.append(True)
+    choices.append(n)
+
+    return pd.Series(np.select(conditions, choices, default=0), index=vix.index)
+
+
+def _leverage_to_allocations(leverage):
+    """将目标杠杆转换为资产权重列表。
+
+    利用 QQQ（1x）、QLD（2x）、TQQQ（3x）构造近似杠杆：
+    - L <= 1.0：全部 QQQ，权重 L
+    - 1.0 < L <= 2.0：QLD @ (L - 1.0) + QQQ @ (2.0 - L)
+    - 2.0 < L <= 3.0：TQQQ @ (L - 2.0) + QLD @ (3.0 - L)
+    - L > 3.0：满仓 TQQQ（当前标的中最大杠杆为 3x）
+    """
+    if leverage <= 1.0:
+        return [("QQQ", leverage)]
+    if leverage <= 2.0:
+        return [("QLD", leverage - 1.0), ("QQQ", 2.0 - leverage)]
+    if leverage <= 3.0:
+        return [("TQQQ", leverage - 2.0), ("QLD", 3.0 - leverage)]
+    return [("TQQQ", 1.0)]
+
+
+def _default_allocations(n_regimes):
+    """返回默认的 N 个区间仓位分配列表（杠杆从 0.5x 起每档递增 0.5x）。"""
+    return [_leverage_to_allocations((i + 1) * 0.5) for i in range(n_regimes)]
+
+
+def _parse_allocation(alloc_str):
+    """解析单个区间分配字符串，返回 [(asset, weight), ...]。
+
+    格式示例："QQQ:0.5" 或 "QLD:0.5,QQQ:0.5"。
+    """
+    if not alloc_str or not alloc_str.strip():
+        return []
+    allocations = []
+    for part in alloc_str.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        if ":" not in part:
+            raise ValueError(f"分配格式错误，应为 资产:权重，如 QQQ:0.5: {alloc_str!r}")
+        asset, weight_str = part.split(":", 1)
+        asset = asset.strip().upper()
+        try:
+            weight = float(weight_str)
+        except ValueError as e:
+            raise ValueError(f"权重必须是数字: {weight_str!r}") from e
+        if weight < 0:
+            raise ValueError(f"权重不能为负数: {weight}")
+        allocations.append((asset, weight))
+    return allocations
+
+
+def _format_allocation(allocation):
+    """将分配列表格式化为人类可读字符串，跳过零权重项。"""
+    parts = [f"{asset} {weight:.1%}" for asset, weight in allocation if weight > 0]
+    return " + ".join(parts) if parts else "空仓"
+
+
+def _regime_label(i, thresholds):
+    """根据区间索引和阈值生成 VIX 区间描述，与 _regime_from_vix 规则一致。"""
+    n = len(thresholds)
+    if n == 0:
+        return "所有 VIX"
+    if i == 0:
+        return f"VIX < {thresholds[0]}"
+    if i == 1:
+        if n >= 2:
+            return f"{thresholds[0]} <= VIX < {thresholds[1]}"
+        return f"VIX >= {thresholds[0]}"
+    if i < n:
+        return f"{thresholds[i - 1]} <= VIX <= {thresholds[i]}"
+    return f"VIX > {thresholds[-1]}"
+
+
+def _validate_allocations(allocations, n_regimes, available_symbols):
+    """校验自定义分配列表是否合法。"""
+    if len(allocations) != n_regimes:
+        raise ValueError(f"分配数量必须为 {n_regimes}（阈值数量 + 1），当前为 {len(allocations)}")
+
+    valid_symbols = set(s.upper() for s in available_symbols)
+    for i, alloc in enumerate(allocations):
+        total_weight = 0.0
+        for asset, weight in alloc:
+            if asset not in valid_symbols and asset not in {"QQQ", "QLD", "TQQQ"}:
+                raise ValueError(f"第 {i} 个区间包含未知资产: {asset}")
+            total_weight += weight
+        if total_weight > 1.0 + 1e-9:
+            raise ValueError(f"第 {i} 个区间权重和 {total_weight:.4f} 超过 1.0")
+
+    return allocations
+
+
+def build_signals(close, vix, thresholds, allocations=None):
     """根据 VIX 阈值生成每日目标权重矩阵（支持混合仓位与标的回退）。
 
-    仓位规则（默认阈值 13/20/30/40）：
+    阈值数量决定仓位档位数量（N 个阈值对应 N+1 个档位）。默认按杠杆从 0.5x
+    起每档递增 0.5x 自动映射到 QQQ/QLD/TQQQ。也可通过 allocations 参数完全
+    自定义每个区间的持仓比重。
+
+    默认 4 阈值（13/20/30/40）对应历史 5 档仓位：
     - VIX < 13：半仓 QQQ
     - 13 <= VIX < 20：满仓 QQQ
-    - 20 < VIX <= 30：半仓 QLD + 半仓 QQQ
+    - 20 <= VIX <= 30：半仓 QLD + 半仓 QQQ
     - 30 < VIX <= 40：满仓 QLD
     - VIX > 40：半仓 QLD + 半仓 TQQQ
 
@@ -341,38 +467,42 @@ def build_signals(close, vix, thresholds):
     Args:
         close: 收盘价 DataFrame，columns 为资产代码。
         vix: VIX 收盘价 Series。
-        thresholds: 阈值元组 (low, mid1, mid2, high)，默认 (13, 20, 30, 40)。
+        thresholds: 阈值序列（list/tuple），默认 (13, 20, 30, 40)。
+        allocations: 可选，自定义分配列表，长度须为 len(thresholds)+1。
+            每个元素为 [(asset, weight), ...]。为 None 时使用默认映射。
 
     Returns:
-        weights: DataFrame，与 close 同形，每日权重和为 0.5 或 1.0，其余为 0。
+        weights: DataFrame，与 close 同形，每日权重和由 allocations 决定。
     """
-    low, mid1, mid2, high = thresholds
+    thresholds = tuple(thresholds)
+    n_regimes = len(thresholds) + 1
+
+    if allocations is None:
+        allocations = _default_allocations(n_regimes)
+    else:
+        allocations = list(allocations)
+        _validate_allocations(allocations, n_regimes, close.columns)
 
     # 对齐 VIX 与收盘价日期，缺失日期/缺失值均前向填充
     # 注意：VIX 是日终发布，调用方应将信号滞后一日执行以避免前视偏差
     vix_aligned = vix.reindex(close.index, method="ffill").ffill()
 
+    regime = _regime_from_vix(vix_aligned, thresholds)
+
     weights = pd.DataFrame(0.0, index=close.index, columns=close.columns)
 
     for i, date in enumerate(close.index):
         v = vix_aligned.iloc[i]
-        # VIX 缺失时保持空仓，避免 NaN 比较落入 else 分支导致激进仓位
+        # VIX 缺失时保持空仓，避免 NaN 比较落入高杠杆分支
         if pd.isna(v):
             continue
+
         close_row = close.loc[date]
+        day_allocations = allocations[int(regime.iloc[i])]
 
-        if v < low:
-            allocations = [("QQQ", 0.5)]
-        elif v < mid1:
-            allocations = [("QQQ", 1.0)]
-        elif v <= mid2:
-            allocations = [("QLD", 0.5), ("QQQ", 0.5)]
-        elif v <= high:
-            allocations = [("QLD", 1.0)]
-        else:
-            allocations = [("QLD", 0.5), ("TQQQ", 0.5)]
-
-        for asset, weight in allocations:
+        for asset, weight in day_allocations:
+            if weight <= 0:
+                continue
             resolved = _resolve_asset(asset, close_row)
             if resolved:
                 weights.loc[date, resolved] += weight
@@ -393,12 +523,14 @@ def run_backtest(
     slippage,
     close=None,
     vix=None,
+    allocations=None,
 ):
     """执行回测并返回 Portfolio 对象。
 
     Args:
         close: 预拉取的收盘价 DataFrame。为 None 时自动下载。
         vix: 预拉取的 VIX Series。为 None 时自动下载。
+        allocations: 可选，自定义每个 VIX 区间的持仓分配。
     """
     if close is None:
         close = fetch_etf_data(symbols, start, end)
@@ -421,7 +553,7 @@ def run_backtest(
     close = close.loc[common_idx]
     vix = vix.loc[common_idx]
 
-    weights = build_signals(close, vix, thresholds)
+    weights = build_signals(close, vix, thresholds, allocations=allocations)
     # VIX 收盘后发布，当日信号次日执行，避免前视偏差
     weights = weights.shift(1).fillna(0.0)
 
@@ -517,36 +649,42 @@ def save_results(portfolio, weights, args, close):
     scale = args.cash / value.iloc[0] if value.iloc[0] != 0 else 1.0
     chart_value = value * scale
 
-    # 买入持有基准
-    benchmark_symbol = getattr(args, "benchmark", "QQQ")
-    if benchmark_symbol not in close.columns:
-        print(
-            f"[Backtest] 警告: 基准 {benchmark_symbol} 不在回测标的中，跳过基准曲线",
-            file=sys.stderr,
-        )
-        benchmark_value = pd.Series(dtype=float)
-    else:
-        benchmark = close[benchmark_symbol].dropna()
-        if benchmark.empty or pd.isna(benchmark.iloc[0]) or benchmark.iloc[0] == 0:
+    # 买入持有基准（支持多个标的）
+    benchmark_symbols = getattr(args, "benchmark", ["QQQ"])
+    if isinstance(benchmark_symbols, str):
+        benchmark_symbols = [benchmark_symbols]
+
+    benchmark_values = []
+    for symbol in benchmark_symbols:
+        if symbol not in close.columns:
             print(
-                f"[Backtest] 警告: 基准 {benchmark_symbol} 数据无效，跳过基准曲线",
+                f"[Backtest] 警告: 基准 {symbol} 不在回测标的中，跳过该基准曲线",
                 file=sys.stderr,
             )
-            benchmark_value = pd.Series(dtype=float)
-        else:
-            benchmark_value = args.cash * benchmark / benchmark.iloc[0]
+            continue
+        benchmark = close[symbol].dropna()
+        if benchmark.empty or pd.isna(benchmark.iloc[0]) or benchmark.iloc[0] == 0:
+            print(
+                f"[Backtest] 警告: 基准 {symbol} 数据无效，跳过该基准曲线",
+                file=sys.stderr,
+            )
+            continue
+        # 买入持有基准：期初一次性买入并持有，买入价按手续费+滑点调整，
+        # 使基准与回测在交易成本口径上尽可能可比。
+        adjusted_initial = benchmark.iloc[0] * (1 + args.fees + args.slippage)
+        benchmark_values.append((symbol, args.cash * benchmark / adjusted_initial))
 
     # 回撤（基于缩放后的净值计算，比率不变）
     cummax = chart_value.cummax()
     drawdown = (chart_value - cummax) / cummax
 
-    # 构建组合图表
+    benchmark_title = "、".join(s for s, _ in benchmark_values) if benchmark_values else "买入持有"
     fig = sp.make_subplots(
         rows=3,
         cols=1,
         shared_xaxes=True,
         vertical_spacing=0.08,
-        subplot_titles=("组合净值 vs 买入持有 QQQ", "持仓权重", "回撤"),
+        subplot_titles=(f"组合净值 vs 买入持有 {benchmark_title}", "持仓权重", "回撤"),
         row_heights=[0.5, 0.25, 0.25],
     )
 
@@ -555,13 +693,13 @@ def save_results(portfolio, weights, args, close):
         row=1,
         col=1,
     )
-    if not benchmark_value.empty:
+    for symbol, benchmark_value in benchmark_values:
         fig.add_trace(
             go.Scatter(
                 x=benchmark_value.index,
                 y=benchmark_value,
-                name="买入持有 QQQ",
-                line=dict(color="#9467bd", dash="dash"),
+                name=f"买入持有 {symbol}",
+                line=dict(dash="dash"),
             ),
             row=1,
             col=1,
@@ -602,6 +740,12 @@ def save_results(portfolio, weights, args, close):
     fig.update_yaxes(title_text="权重", row=2, col=1)
     fig.update_yaxes(title_text="回撤 %", row=3, col=1)
 
+    n_regimes = len(args.thresholds) + 1
+    allocations = getattr(args, "allocations", None)
+    if allocations is None:
+        allocations = _default_allocations(n_regimes)
+    allocation_strs = [_format_allocation(a) for a in allocations]
+
     metrics = {
         "symbols": args.symbols,
         "start": str(portfolio.close.index[0].date()),
@@ -610,6 +754,7 @@ def save_results(portfolio, weights, args, close):
         "cash": args.cash,
         "fees": args.fees,
         "slippage": args.slippage,
+        "allocations": allocation_strs,
         "initial_value": initial_value,
         "final_value": final_value,
         "total_return": float(value_metrics["total_return"]),
@@ -619,6 +764,14 @@ def save_results(portfolio, weights, args, close):
         "calmar_ratio": float(value_metrics["calmar"]),
         "trade_count": int(portfolio.trades.count().sum()),
         "win_rate": float(portfolio.trades.win_rate().mean()),
+        "benchmarks": [
+            {
+                "symbol": symbol,
+                "final_value": float(bm_value.iloc[-1]) if not bm_value.empty else None,
+                "total_return": float(bm_value.iloc[-1] / bm_value.iloc[0] - 1) if len(bm_value) >= 2 else 0.0,
+            }
+            for symbol, bm_value in benchmark_values
+        ],
     }
 
     html_path = OUTPUT_DIR / f"{prefix}.html"
@@ -633,9 +786,22 @@ def save_results(portfolio, weights, args, close):
 
 def _write_backtest_html(html_path, fig, metrics):
     """将 Plotly 图表与紧凑绩效表格组合成完整 HTML 页面。"""
-    rows = [
+    config_rows = [
+        ("回测标的", ", ".join(metrics["symbols"])),
+        ("VIX 阈值", str(metrics["thresholds"])),
+        ("初始资金", f"{metrics['initial_value']:,.2f}"),
+        ("手续费率", f"{metrics['fees']:.2%}"),
+        ("滑点率", f"{metrics['slippage']:.2%}"),
+    ]
+
+    thresholds = metrics.get("thresholds", ())
+    allocation_rows = [
+        (_regime_label(i, thresholds), allocation)
+        for i, allocation in enumerate(metrics.get("allocations", []))
+    ]
+
+    perf_rows = [
         ("回测区间", f"{metrics['start']} ~ {metrics['end']}"),
-        ("初始持仓", f"{metrics['initial_value']:,.2f}"),
         ("期末持仓", f"{metrics['final_value']:,.2f}"),
         ("总收益率", f"{metrics['total_return']:.2%}"),
         ("年化收益率", f"{metrics['annualized_return']:.2%}"),
@@ -644,18 +810,25 @@ def _write_backtest_html(html_path, fig, metrics):
         ("Calmar 比率", f"{metrics['calmar_ratio']:.2f}"),
         ("总交易次数", f"{metrics['trade_count']}"),
         ("胜率", f"{metrics['win_rate']:.2%}"),
-        ("手续费率", f"{metrics['fees']:.2%}"),
-        ("滑点率", f"{metrics['slippage']:.2%}"),
     ]
 
-    grid_items = "\n".join(
-        f"            <div class='metric-item'><span class='metric-label'>{label}</span><span class='metric-value'>{val}</span></div>"
-        for label, val in rows
+    def _grid_items(rows):
+        return "\n".join(
+            f"            <div class='metric-item'><span class='metric-label'>{html.escape(str(label))}</span><span class='metric-value'>{html.escape(str(val))}</span></div>"
+            for label, val in rows
+        )
+
+    config_grid_items = _grid_items(config_rows)
+    perf_grid_items = _grid_items(perf_rows)
+
+    allocation_table_rows = "\n".join(
+        f"                <tr><td class='alloc-regime'>{html.escape(str(label))}</td><td class='alloc-holdings'>{html.escape(str(val))}</td></tr>"
+        for label, val in allocation_rows
     )
 
     chart_html = fig.to_html(full_html=False, include_plotlyjs=True, div_id="backtest-chart")
 
-    html = f"""<!DOCTYPE html>
+    page_html = f"""<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
     <meta charset="utf-8">
@@ -716,6 +889,32 @@ def _write_backtest_html(html_path, fig, metrics):
             text-align: right;
             white-space: nowrap;
         }}
+        .alloc-table {{
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 13px;
+        }}
+        .alloc-table th,
+        .alloc-table td {{
+            padding: 6px 8px;
+            text-align: left;
+            border-bottom: 1px solid #f3f4f6;
+        }}
+        .alloc-table th {{
+            color: #6b7280;
+            font-weight: 500;
+            background: #f9fafb;
+        }}
+        .alloc-regime {{
+            color: #374151;
+            font-weight: 500;
+            white-space: nowrap;
+            width: 40%;
+        }}
+        .alloc-holdings {{
+            color: #111827;
+            font-weight: 600;
+        }}
         .chart-panel {{
             background: #fff;
             border-radius: 10px;
@@ -724,6 +923,7 @@ def _write_backtest_html(html_path, fig, metrics):
         }}
         @media (max-width: 480px) {{
             .metrics-grid {{ grid-template-columns: 1fr; }}
+            .alloc-regime {{ white-space: normal; }}
         }}
     </style>
 </head>
@@ -731,9 +931,26 @@ def _write_backtest_html(html_path, fig, metrics):
     <div class="container">
         <h1>VIX 驱动 QQQ/QLD/TQQQ 杠杆轮动回测</h1>
         <div class="metrics-panel">
+            <h2>策略配置</h2>
+            <div class="metrics-grid">
+{config_grid_items}
+            </div>
+        </div>
+        <div class="metrics-panel">
+            <h2>区间持仓配置</h2>
+            <table class="alloc-table">
+                <thead>
+                    <tr><th>VIX 区间</th><th>持仓配置</th></tr>
+                </thead>
+                <tbody>
+{allocation_table_rows}
+                </tbody>
+            </table>
+        </div>
+        <div class="metrics-panel">
             <h2>回测绩效</h2>
             <div class="metrics-grid">
-{grid_items}
+{perf_grid_items}
             </div>
         </div>
         <div class="chart-panel">
@@ -744,7 +961,7 @@ def _write_backtest_html(html_path, fig, metrics):
 </html>"""
 
     with open(html_path, "w", encoding="utf-8") as f:
-        f.write(html)
+        f.write(page_html)
 
 
 
@@ -755,25 +972,58 @@ def parse_args():
     parser.add_argument("--end", default=DEFAULT_END, help="回测结束日期")
     parser.add_argument(
         "--thresholds",
-        nargs=4,
+        nargs="+",
         type=float,
         default=[13.0, 20.0, 30.0, 40.0],
-        metavar=("LOW", "MID1", "MID2", "HIGH"),
-        help="VIX 阈值，默认 13 20 30 40，必须满足 low < mid1 < mid2 < high",
+        metavar="T",
+        help="VIX 阈值序列，默认 13 20 30 40；阈值数量决定仓位档位（N 个阈值对应 N+1 档），需严格递增",
     )
     parser.add_argument("--cash", type=float, default=DEFAULT_CASH, help="初始资金")
     parser.add_argument("--fees", type=float, default=DEFAULT_FEES, help="单边手续费比例")
     parser.add_argument("--slippage", type=float, default=DEFAULT_SLIPPAGE, help="滑点比例")
     parser.add_argument(
         "--benchmark",
+        nargs="+",
         type=str,
-        default="QQQ",
-        help="买入持有基准标的，默认 QQQ",
+        default=["QQQ", "QLD", "TQQQ"],
+        metavar="SYM",
+        help="买入持有基准标的列表，默认 QQQ QLD TQQQ；可传入多个，如 --benchmark QQQ QLD",
+    )
+    parser.add_argument(
+        "--allocations",
+        nargs="+",
+        type=str,
+        default=None,
+        metavar="ALLOC",
+        help=(
+            "自定义每个 VIX 区间的持仓分配，数量必须等于阈值数量+1。"
+            "格式：每个区间为 '资产:权重,资产:权重,...'，如 --allocations "
+            "'QQQ:0.5' 'QQQ:1.0' 'QLD:0.5,QQQ:0.5' 'QLD:1.0' 'QLD:0.5,TQQQ:0.5'"
+        ),
     )
     args = parser.parse_args()
     args.thresholds = tuple(args.thresholds)
-    if not (args.thresholds[0] < args.thresholds[1] < args.thresholds[2] < args.thresholds[3]):
-        parser.error("阈值必须满足 low < mid1 < mid2 < high")
+    if len(args.thresholds) < 1:
+        parser.error("至少需要 1 个阈值")
+    if not all(args.thresholds[i] < args.thresholds[i + 1] for i in range(len(args.thresholds) - 1)):
+        parser.error("阈值必须严格递增")
+
+    if args.allocations is not None:
+        expected = len(args.thresholds) + 1
+        if len(args.allocations) != expected:
+            parser.error(f"--allocations 数量必须为 {expected}（阈值数量 + 1）")
+        parsed = []
+        for alloc_str in args.allocations:
+            try:
+                parsed.append(_parse_allocation(alloc_str))
+            except ValueError as e:
+                parser.error(str(e))
+        try:
+            _validate_allocations(parsed, expected, args.symbols)
+        except ValueError as e:
+            parser.error(str(e))
+        args.allocations = parsed
+
     if args.cash <= 0:
         parser.error("初始资金必须大于 0")
     if args.fees < 0 or args.slippage < 0:
@@ -792,6 +1042,7 @@ def main():
         initial_cash=args.cash,
         fees=args.fees,
         slippage=args.slippage,
+        allocations=args.allocations,
     )
 
     print_metrics(portfolio, weights, args.cash)

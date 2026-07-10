@@ -84,8 +84,8 @@ http://localhost:8080
 
 - VIX < low：半仓 QQQ（0.5 倍）
 - low ≤ VIX < mid1：满仓 QQQ（1 倍）
-- mid1 < VIX ≤ mid2：半仓 QLD + 半仓 QQQ（1.5 倍）
-- mid2 < VIX ≤ high：满仓 QLD（2 倍）
+- mid1 ≤ VIX ≤ mid2：半仓 QLD + 半仓 QQQ（1.5 倍）
+- mid2 ≤ VIX ≤ high：满仓 QLD（2 倍）
 - VIX > high：半仓 QLD + 半仓 TQQQ（2.5 倍）
 
 标的缺失时按以下链条回退：TQQQ → QLD → QQQ → 空仓，QLD → QQQ → 空仓。
