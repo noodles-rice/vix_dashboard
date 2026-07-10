@@ -6,8 +6,9 @@
 
 | 文件 | 说明 |
 |---|---|
-| `data/VIX_History.csv` | CBOE 官方 VIX 日线数据（1990-01-02 至今） |
-| `data/NDX_History.csv` | Yahoo Finance 纳斯达克100指数（^NDX）日线数据（1985-10-01 至今） |
+| `data/VIX_History.csv` | CBOE 官方 VIX 日线数据（运行时下载） |
+| `data/NDX_History.csv` | Yahoo Finance 纳斯达克100指数（^NDX）日线数据（运行时下载） |
+| `data/SPX_History.csv` | Yahoo Finance 标普500指数（^GSPC）日线数据（运行时下载） |
 | `data/last_update.json` | VIX 数据更新时间与状态记录（由 `scripts/start.py` 维护） |
 | `data/ndx_last_update.json` | 纳斯达克100 数据更新状态记录 |
 | `index.html` | 看板主页面 |

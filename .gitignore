@@ -13,11 +13,8 @@ screenshot.png
 data/last_update.json
 data/*_last_update.json
 
-# Auto-downloaded ETF histories (tracked reference data is excepted below)
+# Runtime generated market histories (downloaded on first use)
 data/*_History.csv
-!data/VIX_History.csv
-!data/NDX_History.csv
-!data/SPX_History.csv
 data/etf_metadata.json
 
 # Backtest / optimization outputs
