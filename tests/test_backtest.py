@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """backtest.py 的单元测试。"""
 
+import json
 import sys
+import tempfile
 import unittest
 from io import StringIO
 from pathlib import Path
@@ -143,6 +145,177 @@ class TestParseArgs(unittest.TestCase):
             with patch.object(sys, "stderr", stderr):
                 with self.assertRaises(SystemExit):
                     backtest.parse_args()
+
+
+class TestEtfDataHelpers(unittest.TestCase):
+    def setUp(self):
+        self.tmpdir = tempfile.TemporaryDirectory()
+        self.data_dir = Path(self.tmpdir.name)
+        self.metadata_file = self.data_dir / "etf_metadata.json"
+        patcher_data = patch.object(backtest, "DATA_DIR", self.data_dir)
+        patcher_meta = patch.object(backtest, "ETF_METADATA_FILE", self.metadata_file)
+        self.addCleanup(patcher_data.stop)
+        self.addCleanup(patcher_meta.stop)
+        patcher_data.start()
+        patcher_meta.start()
+
+    def tearDown(self):
+        self.tmpdir.cleanup()
+
+    def _write_etf_csv(self, symbol, dates, close_values):
+        """按项目格式写入 ETF 本地 CSV。"""
+        path = self.data_dir / f"{symbol}_History.csv"
+        df = pd.DataFrame(
+            {
+                "DATE": [d.strftime("%m/%d/%Y") for d in dates],
+                "OPEN": close_values,
+                "HIGH": close_values,
+                "LOW": close_values,
+                "CLOSE": close_values,
+            }
+        )
+        df.to_csv(path, index=False, float_format="%.6f")
+        return path
+
+    def _make_yf_download_result(self, symbols, dates, value=100.0):
+        """构造与 yfinance 返回结构一致的 DataFrame。"""
+        if len(symbols) == 1:
+            return pd.DataFrame(
+                {
+                    "Open": [value] * len(dates),
+                    "High": [value + 1] * len(dates),
+                    "Low": [value - 1] * len(dates),
+                    "Close": [value] * len(dates),
+                },
+                index=dates,
+            )
+        cols = pd.MultiIndex.from_product([["Open", "High", "Low", "Close"], symbols])
+        data = {}
+        for field in ["Open", "High", "Low", "Close"]:
+            for symbol in symbols:
+                data[(field, symbol)] = [value] * len(dates)
+        return pd.DataFrame(data, index=dates, columns=cols)
+
+    def test_validate_symbols_normalizes_and_rejects_traversal(self):
+        self.assertEqual(backtest._validate_symbols(["qqq", "Qld"]), ["QQQ", "QLD"])
+        with self.assertRaises(ValueError):
+            backtest._validate_symbols(["../QQQ"])
+        with self.assertRaises(ValueError):
+            backtest._validate_symbols(["QQQ/QLD"])
+        with self.assertRaises(ValueError):
+            backtest._validate_symbols([])
+
+    def test_local_etf_path_rejects_traversal(self):
+        with self.assertRaises(ValueError):
+            backtest._local_etf_path("../QQQ")
+        path = backtest._local_etf_path("QQQ")
+        self.assertTrue(path.is_relative_to(self.data_dir))
+
+    def test_load_local_etf_missing_returns_none(self):
+        self.assertIsNone(backtest._load_local_etf("QQQ"))
+
+    def test_load_local_etf_missing_columns_raises(self):
+        path = self.data_dir / "QQQ_History.csv"
+        pd.DataFrame({"DATE": ["01/01/2024"], "CLOSE": [100.0]}).to_csv(path, index=False)
+        with self.assertRaises(ValueError):
+            backtest._load_local_etf("QQQ")
+
+    def test_calculate_download_plan_no_local_needs_backward(self):
+        metadata = {}
+        local_data = {}
+        need, start, meta = backtest._calculate_download_plan(
+            ["QQQ"], local_data, metadata,
+            pd.Timestamp("2024-01-01"), pd.Timestamp("2024-01-10"), False
+        )
+        self.assertTrue(need)
+        self.assertEqual(start, pd.Timestamp("2024-01-01"))
+        self.assertEqual(meta["QQQ"]["requested_start"], "2024-01-01")
+
+    def test_calculate_download_plan_local_fresh_no_download(self):
+        dates = pd.date_range("2024-01-01", periods=10)
+        local_data = {"QQQ": pd.DataFrame({"OPEN": [100.0] * 10, "HIGH": [101.0] * 10, "LOW": [99.0] * 10, "CLOSE": [100.0] * 10}, index=dates)}
+        metadata = {"QQQ": {"requested_start": "2024-01-01"}}
+        need, start, meta = backtest._calculate_download_plan(
+            ["QQQ"], local_data, metadata,
+            pd.Timestamp("2024-01-01"), pd.Timestamp("2024-01-10"), False
+        )
+        self.assertFalse(need)
+
+    def test_calculate_download_plan_stale_needs_forward(self):
+        dates = pd.date_range("2024-01-01", periods=5)
+        local_data = {"QQQ": pd.DataFrame({"OPEN": [100.0] * 5, "HIGH": [101.0] * 5, "LOW": [99.0] * 5, "CLOSE": [100.0] * 5}, index=dates)}
+        metadata = {"QQQ": {"requested_start": "2024-01-01"}}
+        need, start, meta = backtest._calculate_download_plan(
+            ["QQQ"], local_data, metadata,
+            pd.Timestamp("2024-01-01"), pd.Timestamp("2024-01-15"), True
+        )
+        self.assertTrue(need)
+        # 向前扩展起始日应不早于 target_start
+        self.assertGreaterEqual(start, pd.Timestamp("2024-01-01"))
+
+    def test_merge_and_save_combines_and_saves(self):
+        dates_old = pd.date_range("2024-01-01", periods=3)
+        dates_new = pd.date_range("2024-01-03", periods=3)
+        local_data = {
+            "QQQ": pd.DataFrame(
+                {"OPEN": [1.0] * 3, "HIGH": [2.0] * 3, "LOW": [0.5] * 3, "CLOSE": [1.0] * 3},
+                index=dates_old,
+            )
+        }
+        downloaded = {
+            "QQQ": pd.DataFrame(
+                {"OPEN": [1.5] * 3, "HIGH": [2.5] * 3, "LOW": [1.0] * 3, "CLOSE": [1.5] * 3},
+                index=dates_new,
+            )
+        }
+        result = backtest._merge_and_save_etf_data(local_data, downloaded)
+        self.assertEqual(len(result["QQQ"]), 5)
+        # 重叠日期 2024-01-03 应使用下载数据
+        self.assertAlmostEqual(result["QQQ"].loc[dates_old[2], "CLOSE"], 1.5)
+        self.assertTrue((self.data_dir / "QQQ_History.csv").exists())
+
+    @patch("backtest.yf.download")
+    def test_fetch_uses_local_data_without_download(self, mock_download):
+        dates = pd.date_range("2024-01-01", periods=5)
+        self._write_etf_csv("QQQ", dates, [100.0, 101.0, 102.0, 103.0, 104.0])
+        close = backtest.fetch_etf_data(["QQQ"], "2024-01-01", "2024-01-05")
+        mock_download.assert_not_called()
+        self.assertIn("QQQ", close.columns)
+        self.assertEqual(len(close), 4)  # end exclusive
+
+    @patch("backtest.yf.download")
+    def test_fetch_downloads_when_local_missing(self, mock_download):
+        dates = pd.date_range("2024-01-01", periods=5)
+        mock_download.return_value = self._make_yf_download_result(["QQQ"], dates, 100.0)
+        close = backtest.fetch_etf_data(["QQQ"], "2024-01-01", "2024-01-05")
+        mock_download.assert_called_once()
+        self.assertIn("QQQ", close.columns)
+        self.assertTrue((self.data_dir / "QQQ_History.csv").exists())
+
+    @patch("backtest.yf.download")
+    def test_fetch_raises_when_symbol_missing(self, mock_download):
+        dates = pd.date_range("2024-01-01", periods=5)
+        # 多标的下载结构中包含 TQQQ 列但全为 NaN，模拟该标的无数据
+        cols = pd.MultiIndex.from_product([["Open", "High", "Low", "Close"], ["QQQ", "TQQQ"]])
+        data = {}
+        for field in ["Open", "High", "Low", "Close"]:
+            data[(field, "QQQ")] = [100.0] * len(dates)
+            data[(field, "TQQQ")] = [np.nan] * len(dates)
+        mock_download.return_value = pd.DataFrame(data, index=dates, columns=cols)
+        with self.assertRaises(ValueError) as ctx:
+            backtest.fetch_etf_data(["QQQ", "TQQQ"], "2024-01-01", "2024-01-05")
+        self.assertIn("TQQQ", str(ctx.exception))
+
+    @patch("backtest.yf.download")
+    def test_fetch_raises_on_empty_downloaded_single_symbol(self, mock_download):
+        dates = pd.date_range("2024-01-01", periods=3)
+        # 单标的返回全 NaN，dropna 后为空
+        mock_download.return_value = pd.DataFrame(
+            {"Open": [np.nan] * 3, "High": [np.nan] * 3, "Low": [np.nan] * 3, "Close": [np.nan] * 3},
+            index=dates,
+        )
+        with self.assertRaises(ValueError):
+            backtest.fetch_etf_data(["QQQ"], "2024-01-01", "2024-01-04")
 
 
 if __name__ == "__main__":

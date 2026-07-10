@@ -40,14 +40,139 @@ DEFAULT_CASH = 10_000
 DEFAULT_FEES = 0.001  # 0.1% 单边交易费用
 DEFAULT_SLIPPAGE = 0.001  # 0.1% 滑点
 
+# 本地 ETF 缓存参数
+_REQUIRED_ETF_COLUMNS = {"DATE", "OPEN", "HIGH", "LOW", "CLOSE"}
+_BACKWARD_BUFFER_DAYS = 5  # 起始日变动小于此天数时不重新向后扩展
+_FORWARD_OVERLAP_DAYS = 5  # 向前扩展时与本地数据的重叠天数，用于对齐和复权
+_OPEN_END_GRACE_DAYS = 5  # 开放式结束日期时允许的数据延迟天数
+_EXPLICIT_END_GRACE_DAYS = 1  # 显式结束日期时允许的数据延迟天数
 
-def fetch_etf_data(symbols, start, end):
-    """从 Yahoo Finance 拉取多个 ETF 的日线数据，返回 OHLC DataFrame（wide format）。"""
-    print(f"[Backtest] 下载数据: {symbols} ...")
+
+def _local_etf_path(symbol):
+    """返回某只 ETF 本地历史数据文件路径。"""
+    if not isinstance(symbol, str) or not symbol:
+        raise ValueError(f"无效的标的代码: {symbol!r}")
+    if ".." in symbol or "/" in symbol or "\\" in symbol:
+        raise ValueError(f"标的代码包含非法字符: {symbol!r}")
+    return DATA_DIR / f"{symbol.upper()}_History.csv"
+
+
+def _load_local_etf(symbol):
+    """加载本地 ETF 历史 CSV；不存在或损坏则抛出异常，不存在则返回 None。"""
+    path = _local_etf_path(symbol)
+    if not path.exists():
+        return None
+    df = pd.read_csv(path)
+    missing = _REQUIRED_ETF_COLUMNS - set(df.columns)
+    if missing:
+        raise ValueError(f"本地 ETF 文件 {path} 缺少必要列: {missing}")
+    df["DATE"] = pd.to_datetime(df["DATE"], format="%m/%d/%Y")
+    df = df.set_index("DATE").sort_index()
+    return df[["OPEN", "HIGH", "LOW", "CLOSE"]]
+
+
+def _save_local_etf(symbol, df):
+    """将 ETF OHLC 数据保存到本地 CSV，格式与现有历史数据一致。"""
+    path = _local_etf_path(symbol)
+    out = df.copy()
+    out.index.name = "DATE"
+    out = out.reset_index()
+    out["DATE"] = out["DATE"].dt.strftime("%m/%d/%Y")
+    out = out[["DATE", "OPEN", "HIGH", "LOW", "CLOSE"]]
+    out.to_csv(path, index=False, float_format="%.6f")
+    print(f"[Backtest] 已保存本地数据: {path}")
+
+
+ETF_METADATA_FILE = DATA_DIR / "etf_metadata.json"
+
+
+def _load_etf_metadata():
+    """加载 ETF 数据元数据，记录每只标的曾经请求过的起始日期。"""
+    if not ETF_METADATA_FILE.exists():
+        return {}
+    with open(ETF_METADATA_FILE, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def _save_etf_metadata(metadata):
+    """保存 ETF 数据元数据。"""
+    with open(ETF_METADATA_FILE, "w", encoding="utf-8") as f:
+        json.dump(metadata, f, ensure_ascii=False, indent=2)
+
+
+def _validate_symbols(symbols):
+    """校验标的代码列表，返回全大写列表；禁止路径逃逸字符。"""
+    if not symbols:
+        raise ValueError("标的代码列表不能为空")
+    validated = []
+    for s in symbols:
+        if not isinstance(s, str) or not s:
+            raise ValueError(f"无效的标的代码: {s!r}")
+        if ".." in s or "/" in s or "\\" in s:
+            raise ValueError(f"标的代码包含非法字符: {s!r}")
+        validated.append(s.upper())
+    return validated
+
+
+def _calculate_download_plan(symbols, local_data, metadata, target_start, target_end, end_is_open):
+    """根据本地数据和元数据判断是否需要下载，以及下载起始日。
+
+    返回三元组：(need_download, download_start, updated_metadata)。
+    注意：本地数据默认是连续交易日序列，中间不存在缺失区间。
+    """
+    need_backward = False
+    need_forward = False
+    forward_download_starts = []
+
+    for symbol in symbols:
+        meta = metadata.setdefault(symbol, {})
+        if symbol not in local_data:
+            need_backward = True
+            meta["requested_start"] = target_start.strftime("%Y-%m-%d")
+            continue
+
+        df = local_data[symbol]
+        last_date = df.index[-1]
+        recorded_start_str = meta.get("requested_start")
+        recorded_start = pd.Timestamp(recorded_start_str) if recorded_start_str else target_start
+
+        # 用户要求比历史记录更早的数据：尝试向后扩展
+        if target_start < recorded_start - pd.Timedelta(days=_BACKWARD_BUFFER_DAYS):
+            need_backward = True
+            meta["requested_start"] = target_start.strftime("%Y-%m-%d")
+        elif "requested_start" not in meta:
+            meta["requested_start"] = target_start.strftime("%Y-%m-%d")
+
+        # 向未来扩展：开放式结束允许若干天延迟，显式结束需覆盖到目标结束日前一天
+        if end_is_open and last_date < target_end - pd.Timedelta(days=_OPEN_END_GRACE_DAYS):
+            need_forward = True
+            forward_download_starts.append(last_date - pd.Timedelta(days=_FORWARD_OVERLAP_DAYS))
+        elif not end_is_open and last_date < target_end - pd.Timedelta(days=_EXPLICIT_END_GRACE_DAYS):
+            need_forward = True
+            forward_download_starts.append(last_date - pd.Timedelta(days=_FORWARD_OVERLAP_DAYS))
+
+    if need_backward:
+        download_start = target_start
+    elif need_forward:
+        download_start = min(forward_download_starts)
+        download_start = max(download_start, target_start)
+    else:
+        download_start = target_start
+
+    need_download = need_backward or need_forward
+    return need_download, download_start, metadata
+
+
+def _download_etf_data(symbols, download_start, target_end):
+    """通过 yfinance 下载 ETF 数据，返回 {symbol: OHLC DataFrame}。
+
+    仅返回非空数据的标的；完全未获取到的标的不在结果中。
+    """
+    print(f"[Backtest] 下载/更新数据: {symbols} ...")
     data = yf.download(
         symbols,
-        start=start,
-        end=end,
+        start=download_start.strftime("%Y-%m-%d"),
+        end=(target_end + pd.Timedelta(days=1)).strftime("%Y-%m-%d"),
         progress=False,
         auto_adjust=True,
         threads=True,
@@ -55,9 +180,107 @@ def fetch_etf_data(symbols, start, end):
     if data.empty:
         raise ValueError("未获取到任何数据，请检查网络或标的代码。")
 
-    # yfinance 多资产返回 MultiIndex columns: (field, symbol)
-    # 转换为 (symbol, field) 以便后续处理
-    close = data["Close"]
+    downloaded = {}
+    # yfinance 单资产返回 Series，多资产返回 MultiIndex columns: (field, symbol)
+    single_symbol = len(symbols) == 1
+    for symbol in symbols:
+        if single_symbol:
+            open_series = data["Open"]
+            high_series = data["High"]
+            low_series = data["Low"]
+            close_series = data["Close"]
+        else:
+            if symbol not in data["Close"].columns:
+                continue
+            open_series = data["Open"][symbol]
+            high_series = data["High"][symbol]
+            low_series = data["Low"][symbol]
+            close_series = data["Close"][symbol]
+
+        df = pd.DataFrame(
+            {
+                "OPEN": open_series,
+                "HIGH": high_series,
+                "LOW": low_series,
+                "CLOSE": close_series,
+            }
+        ).dropna()
+
+        if not df.empty:
+            downloaded[symbol] = df
+
+    return downloaded
+
+
+def _merge_and_save_etf_data(local_data, downloaded):
+    """将下载数据合并到本地缓存，仅在有变化时写回磁盘。"""
+    for symbol, df in downloaded.items():
+        if symbol in local_data:
+            original = local_data[symbol]
+            # 合并本地与下载数据，重叠日期使用新下载的数据
+            combined = pd.concat([original, df])
+            combined = combined[~combined.index.duplicated(keep="last")]
+            combined = combined.sort_index()
+            local_data[symbol] = combined
+            # 只有真正出现新数据或调整时才重写本地文件
+            if not combined.equals(original):
+                _save_local_etf(symbol, combined)
+        else:
+            local_data[symbol] = df.sort_index()
+            _save_local_etf(symbol, local_data[symbol])
+    return local_data
+
+
+def fetch_etf_data(symbols, start, end):
+    """获取多只 ETF 的日线收盘价，优先使用本地 CSV 并自动增量更新。
+
+    每次执行时会检查本地数据是否存在、是否需要向未来/过去扩展；缺失或过时则
+    通过 yfinance 下载补充，合并后写回本地文件。元数据会记录曾经请求过的
+    起始日期，避免每次回测都重复尝试下载 ETF 上市前的历史数据。
+    """
+    symbols = _validate_symbols(symbols)
+    target_start = pd.Timestamp(start) if start is not None else pd.Timestamp(DEFAULT_START)
+    target_end = pd.Timestamp(end) if end is not None else pd.Timestamp.now().normalize()
+    end_is_open = end is None
+
+    metadata = _load_etf_metadata()
+    local_data = {}
+    for symbol in symbols:
+        df = _load_local_etf(symbol)
+        if df is not None:
+            local_data[symbol] = df
+
+    need_download, download_start, metadata = _calculate_download_plan(
+        symbols, local_data, metadata, target_start, target_end, end_is_open
+    )
+
+    downloaded = {}
+    if need_download:
+        downloaded = _download_etf_data(symbols, download_start, target_end)
+    else:
+        print(f"[Backtest] 使用本地数据: {symbols}")
+
+    # 任一标的在本地和本次下载中均无数据，则整体失败，避免静默缺失列
+    missing_symbols = [s for s in symbols if s not in local_data and s not in downloaded]
+    if missing_symbols:
+        raise ValueError(f"未能获取以下标的的数据: {missing_symbols}")
+
+    local_data = _merge_and_save_etf_data(local_data, downloaded)
+    _save_etf_metadata(metadata)
+
+    # 按请求区间过滤后返回收盘价
+    close_frames = {}
+    for symbol in symbols:
+        if symbol not in local_data:
+            continue
+        df = local_data[symbol].copy()
+        df = df[(df.index >= target_start) & (df.index < target_end)]
+        close_frames[symbol] = df["CLOSE"]
+
+    if not close_frames:
+        raise ValueError("未获取到任何数据，请检查本地文件或标的代码。")
+
+    close = pd.DataFrame(close_frames)
     return close
 
 
