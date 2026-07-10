@@ -569,6 +569,9 @@ def run_backtest(
         slippage=slippage,
         freq="1d",
         init_cash=initial_cash,
+        # 多资产 targetpercent 必须共享同一笔现金，否则 vectorbt 会为每个资产
+        # 单独分配初始资金，导致杠杆/下单计算与预期不符。
+        cash_sharing=True,
     )
 
     return portfolio, close, vix, weights

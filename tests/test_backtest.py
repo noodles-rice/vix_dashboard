@@ -421,6 +421,34 @@ class TestRunBacktest(unittest.TestCase):
             )
         self.assertIn("没有重叠日期", str(ctx.exception))
 
+    def test_multi_asset_target_percent_with_cash_sharing(self):
+        """验证多资产 targetpercent 在 cash_sharing=True 下资金从初始现金正确起步。"""
+        dates = pd.date_range("2024-01-01", periods=5)
+        close = pd.DataFrame(
+            {
+                "QQQ": [100.0, 101.0, 102.0, 103.0, 104.0],
+                "QLD": [50.0, 51.0, 52.0, 53.0, 54.0],
+            },
+            index=dates,
+        )
+        vix = pd.Series([15.0] * 5, index=dates)
+        portfolio, _, _, _ = backtest.run_backtest(
+            symbols=["QQQ", "QLD"],
+            start="2024-01-01",
+            end="2024-01-06",
+            thresholds=(20.0,),
+            initial_cash=10000.0,
+            fees=0.0,
+            slippage=0.0,
+            close=close,
+            vix=vix,
+            allocations=[[("QQQ", 0.5), ("QLD", 0.5)], [("QQQ", 1.0)]],
+        )
+        value = portfolio.value()
+        self.assertAlmostEqual(float(value.iloc[0]), 10000.0)
+        self.assertFalse(value.isna().any())
+        self.assertGreater(float(value.iloc[-1]), 0.0)
+
 
 class TestSaveResults(unittest.TestCase):
     def setUp(self):
