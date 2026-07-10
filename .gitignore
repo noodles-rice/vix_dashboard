@@ -15,6 +15,7 @@ data/*_last_update.json
 
 # Runtime generated market histories (downloaded on first use)
 data/*_History.csv
+data/*_History_*.csv.bak
 data/etf_metadata.json
 
 # Backtest / optimization outputs
