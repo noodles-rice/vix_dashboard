@@ -1,19 +1,26 @@
 #!/usr/bin/env python3
 """基于 VectorBT 的 VIX 驱动 QQQ/QLD/TQQQ 杠杆轮动回测。
 
-策略逻辑示例（默认 4 阈值 13/20/30/40）：
-- VIX < 13：半仓 QQQ（0.5 倍）
-- 13 <= VIX < 20：满仓 QQQ（1 倍）
+策略完全通过命令行参数 --thresholds 与 --allocations 控制。N 个阈值对应
+N+1 个区间，区间边界规则统一为：
+- 第 0 区间：VIX < thresholds[0]
+- 第 1 区间：thresholds[0] <= VIX <= thresholds[1]
+- 第 i 区间（i >= 2）：thresholds[i-1] < VIX <= thresholds[i]
+- 第 N 区间：VIX > thresholds[-1]
+
+示例（4 阈值 20/30/40/50）：
+- VIX < 20：满仓 QQQ（1 倍）
 - 20 <= VIX <= 30：半仓 QLD + 半仓 QQQ（1.5 倍）
 - 30 < VIX <= 40：满仓 QLD（2 倍）
-- VIX > 40：半仓 QLD + 半仓 TQQQ（2.5 倍）
-
-阈值数量可任意指定：N 个阈值对应 N+1 个档位，杠杆从 0.5x 起每档递增 0.5x。
-
-标的缺失时按以下链条回退：TQQQ -> QLD -> QQQ -> 空仓，QLD -> QQQ -> 空仓。
+- 40 < VIX <= 50：半仓 QLD + 半仓 TQQQ（2.5 倍）
+- VIX > 50：满仓 TQQQ（3 倍）
 
 运行方式：
-    source /root/vix/.venv/bin/activate && python scripts/backtest.py
+    source /root/vix/.venv/bin/activate && python scripts/backtest.py \
+        --thresholds 20 30 40 50 \
+        --allocations "QQQ:1.0" "QLD:0.5,QQQ:0.5" "QLD:1.0" "QLD:0.5,TQQQ:0.5" "TQQQ:1.0"
+
+标的缺失时按以下链条回退：TQQQ -> QLD -> QQQ -> 空仓，QLD -> QQQ -> 空仓。
 """
 
 from __future__ import annotations
@@ -294,15 +301,20 @@ def fetch_etf_data(symbols, start, end):
 def fetch_vix_data(start, end):
     """获取 VIX 数据。
 
-    优先使用本地 data/VIX_History.csv，若不存在则通过 yfinance 拉取 ^VIX。
+    优先使用本地 data/VIX_History.csv 的 HIGH/LOW 列，若不存在则通过 yfinance
+    拉取 ^VIX。信号使用当日 VIX 中间价（最高价与最低价的平均值）。
     """
     local_vix = DATA_DIR / "VIX_History.csv"
     if local_vix.exists():
-        print("[Backtest] 使用本地 VIX_History.csv ...")
         df = pd.read_csv(local_vix)
         df["DATE"] = pd.to_datetime(df["DATE"], format="%m/%d/%Y")
         df = df.set_index("DATE").sort_index()
-        vix = df["CLOSE"].rename("VIX")
+        if {"HIGH", "LOW"}.issubset(df.columns):
+            print("[Backtest] 使用本地 VIX_History.csv (HIGH/LOW 中间价) ...")
+            vix = ((df["HIGH"] + df["LOW"]) / 2).rename("VIX")
+        else:
+            print("[Backtest] 本地 VIX_History.csv 缺少 HIGH/LOW，使用 CLOSE ...")
+            vix = df["CLOSE"].rename("VIX")
         if start is not None:
             vix = vix[vix.index >= pd.Timestamp(start)]
         if end is not None:
@@ -310,8 +322,12 @@ def fetch_vix_data(start, end):
         return vix
 
     print("[Backtest] 本地 VIX 数据不存在，从 Yahoo Finance 下载 ^VIX ...")
-    vix = yf.download(DEFAULT_VIX_SYMBOL, start=start, end=end, progress=False, auto_adjust=True)["Close"]
-    return vix.squeeze().rename("VIX")
+    vix_data = yf.download(DEFAULT_VIX_SYMBOL, start=start, end=end, progress=False, auto_adjust=True)
+    if {"High", "Low"}.issubset(vix_data.columns):
+        vix = ((vix_data["High"] + vix_data["Low"]) / 2).squeeze().rename("VIX")
+    else:
+        vix = vix_data["Close"].squeeze().rename("VIX")
+    return vix
 
 
 def _resolve_asset(asset, close_row):
@@ -327,14 +343,30 @@ def _resolve_asset(asset, close_row):
     return None
 
 
-def _regime_from_vix(vix, thresholds):
-    """根据 VIX 值与阈值序列返回区间索引（0..N，N 为阈值数量）。
+def _regime_index_from_vix_scalar(v, thresholds):
+    """标量 VIX 值对应的区间索引（0..N，N 为阈值数量）。"""
+    if not thresholds:
+        return 0
+    n = len(thresholds)
+    if v < thresholds[0]:
+        return 0
+    if n >= 2:
+        if v <= thresholds[1]:
+            return 1
+        for i in range(2, n):
+            if v <= thresholds[i]:
+                return i
+    return n
 
-    划分规则与历史 4 阈值行为保持一致：
+
+def _regime_from_vix(vix, thresholds):
+    """根据 VIX Series 与阈值序列返回区间索引（0..N，N 为阈值数量）。
+
+    区间边界规则：
     - 第 0 区间：v < thresholds[0]
-    - 第 1 区间：v < thresholds[1]（当阈值数量 >= 2）
-    - 第 i 区间（2 <= i < N）：v <= thresholds[i]
-    - 第 N 区间：剩余所有值
+    - 第 1 区间：thresholds[0] <= v <= thresholds[1]
+    - 第 i 区间（2 <= i < N）：thresholds[i-1] < v <= thresholds[i]
+    - 第 N 区间：v > thresholds[-1]
     """
     if not thresholds:
         return pd.Series(0, index=vix.index)
@@ -344,7 +376,8 @@ def _regime_from_vix(vix, thresholds):
     choices = [0]
 
     if n >= 2:
-        conditions.append(vix < thresholds[1])
+        # 第 1 个区间右闭，与后续区间保持一致
+        conditions.append(vix <= thresholds[1])
         choices.append(1)
         for i in range(2, n):
             conditions.append(vix <= thresholds[i])
@@ -354,6 +387,50 @@ def _regime_from_vix(vix, thresholds):
     choices.append(n)
 
     return pd.Series(np.select(conditions, choices, default=0), index=vix.index)
+
+
+def _regime_from_vix_hysteresis(vix, thresholds, hysteresis=0.0):
+    """带退出滞后的 VIX 区间判断。
+
+    上行（进入更高档位/更高杠杆）使用原始阈值；下行（退出到更低档位）
+    使用原始阈值减去 hysteresis，避免 VIX 快速回落时立即降杠杆。
+
+    例如 thresholds=(20,30,40,50)、hysteresis=5：
+    - VIX 从 15 涨到 22 时立即进入 20-30 档位
+    - VIX 从 32 回落到 28 时仍保持 30-40 档位，只有跌破 25 才降档
+    """
+    if hysteresis <= 0 or not thresholds:
+        return _regime_from_vix(vix, thresholds)
+
+    thresholds = tuple(thresholds)
+    exit_thresholds = tuple(t - hysteresis for t in thresholds)
+
+    regime = pd.Series(index=vix.index, dtype=int)
+    current = 0
+    initialized = False
+
+    for i, v in enumerate(vix):
+        if pd.isna(v):
+            regime.iloc[i] = current
+            continue
+
+        if not initialized:
+            current = int(_regime_index_from_vix_scalar(v, thresholds))
+            initialized = True
+            regime.iloc[i] = current
+            continue
+
+        target_up = _regime_index_from_vix_scalar(v, thresholds)
+        target_down = _regime_index_from_vix_scalar(v, exit_thresholds)
+
+        if target_up > current:
+            current = target_up
+        elif target_down < current:
+            current = target_down
+
+        regime.iloc[i] = current
+
+    return regime
 
 
 def _leverage_to_allocations(leverage):
@@ -420,7 +497,7 @@ def _regime_label(i, thresholds):
         return f"VIX < {thresholds[0]}"
     if i == 1:
         if n >= 2:
-            return f"{thresholds[0]} <= VIX < {thresholds[1]}"
+            return f"{thresholds[0]} <= VIX <= {thresholds[1]}"
         return f"VIX >= {thresholds[0]}"
     if i < n:
         return f"{thresholds[i - 1]} <= VIX <= {thresholds[i]}"
@@ -445,19 +522,22 @@ def _validate_allocations(allocations, n_regimes, available_symbols):
     return allocations
 
 
-def build_signals(close, vix, thresholds, allocations=None):
+def build_signals(close, vix, thresholds, allocations=None, hysteresis=0.0, vix_ma=1):
     """根据 VIX 阈值生成每日目标权重矩阵（支持混合仓位与标的回退）。
 
-    阈值数量决定仓位档位数量（N 个阈值对应 N+1 个档位）。默认按杠杆从 0.5x
-    起每档递增 0.5x 自动映射到 QQQ/QLD/TQQQ。也可通过 allocations 参数完全
-    自定义每个区间的持仓比重。
+    阈值数量决定仓位档位数量（N 个阈值对应 N+1 个档位）。未提供 allocations
+    时，默认按杠杆从 0.5x 起每档递增 0.5x 自动映射到 QQQ/QLD/TQQQ。也可通过
+    allocations 参数完全自定义每个区间的持仓比重。
 
-    默认 4 阈值（13/20/30/40）对应历史 5 档仓位：
-    - VIX < 13：半仓 QQQ
-    - 13 <= VIX < 20：满仓 QQQ
-    - 20 <= VIX <= 30：半仓 QLD + 半仓 QQQ
-    - 30 < VIX <= 40：满仓 QLD
-    - VIX > 40：半仓 QLD + 半仓 TQQQ
+    区间边界规则：
+    - 第 0 区间：VIX < thresholds[0]
+    - 第 1 区间：thresholds[0] <= VIX <= thresholds[1]
+    - 第 i 区间（i >= 2）：thresholds[i-1] < VIX <= thresholds[i]
+    - 第 N 区间：VIX > thresholds[-1]
+
+    hysteresis 用于控制退出滞后：上行使用原始阈值，下行使用
+    thresholds - hysteresis，可减少 VIX 快速回落导致的频繁交易。
+    vix_ma 用于对 VIX 中间价做 N 日移动平均，进一步平滑单日尖刺。
 
     标的缺失时按以下链条回退：
     - TQQQ 缺失 -> QLD -> QQQ -> 空仓
@@ -466,10 +546,12 @@ def build_signals(close, vix, thresholds, allocations=None):
 
     Args:
         close: 收盘价 DataFrame，columns 为资产代码。
-        vix: VIX 收盘价 Series。
-        thresholds: 阈值序列（list/tuple），默认 (13, 20, 30, 40)。
+        vix: VIX 中间价 Series（(HIGH + LOW) / 2）。
+        thresholds: 阈值序列（list/tuple）。
         allocations: 可选，自定义分配列表，长度须为 len(thresholds)+1。
-            每个元素为 [(asset, weight), ...]。为 None 时使用默认映射。
+            每个元素为 [(asset, weight), ...]。为 None 时使用默认杠杆映射。
+        hysteresis: 退出滞后点数，默认 0（无滞后）。
+        vix_ma: VIX 移动平均窗口，默认 1（不平滑）。
 
     Returns:
         weights: DataFrame，与 close 同形，每日权重和由 allocations 决定。
@@ -484,10 +566,14 @@ def build_signals(close, vix, thresholds, allocations=None):
         _validate_allocations(allocations, n_regimes, close.columns)
 
     # 对齐 VIX 与收盘价日期，缺失日期/缺失值均前向填充
-    # 注意：VIX 是日终发布，调用方应将信号滞后一日执行以避免前视偏差
+    # 注意：VIX 使用当日中间价（HIGH/LOW 平均）生成信号；如需避免前视偏差，
+    # 调用方应自行将信号滞后一日执行（run_backtest 已默认这样做）。
     vix_aligned = vix.reindex(close.index, method="ffill").ffill()
 
-    regime = _regime_from_vix(vix_aligned, thresholds)
+    if vix_ma > 1:
+        vix_aligned = vix_aligned.rolling(window=vix_ma, min_periods=1).mean()
+
+    regime = _regime_from_vix_hysteresis(vix_aligned, thresholds, hysteresis)
 
     weights = pd.DataFrame(0.0, index=close.index, columns=close.columns)
 
@@ -524,6 +610,8 @@ def run_backtest(
     close=None,
     vix=None,
     allocations=None,
+    hysteresis=0.0,
+    vix_ma=1,
 ):
     """执行回测并返回 Portfolio 对象。
 
@@ -531,6 +619,8 @@ def run_backtest(
         close: 预拉取的收盘价 DataFrame。为 None 时自动下载。
         vix: 预拉取的 VIX Series。为 None 时自动下载。
         allocations: 可选，自定义每个 VIX 区间的持仓分配。
+        hysteresis: 退出滞后点数，默认 0。
+        vix_ma: VIX 移动平均窗口，默认 1。
     """
     if close is None:
         close = fetch_etf_data(symbols, start, end)
@@ -553,13 +643,17 @@ def run_backtest(
     close = close.loc[common_idx]
     vix = vix.loc[common_idx]
 
-    weights = build_signals(close, vix, thresholds, allocations=allocations)
-    # VIX 收盘后发布，当日信号次日执行，避免前视偏差
+    weights = build_signals(close, vix, thresholds, allocations=allocations, hysteresis=hysteresis, vix_ma=vix_ma)
+    # VIX 数据日终才完整可知，当日信号次日执行，避免前视偏差
     weights = weights.shift(1).fillna(0.0)
 
     print(f"[Backtest] 回测区间: {close.index[0].date()} ~ {close.index[-1].date()}")
     print(f"[Backtest] 资产数量: {len(close.columns)}")
     print(f"[Backtest] VIX 阈值: {thresholds}")
+    if hysteresis:
+        print(f"[Backtest] 退出滞后: {hysteresis}")
+    if vix_ma > 1:
+        print(f"[Backtest] VIX 移动平均: {vix_ma} 日")
 
     portfolio = vbt.Portfolio.from_orders(
         close=close,
@@ -575,6 +669,13 @@ def run_backtest(
     )
 
     return portfolio, close, vix, weights
+
+
+def _max_drawdown_from_value(value):
+    """根据价值序列计算最大回撤（返回负数，如 -0.2 表示 -20%）。"""
+    cummax = value.cummax()
+    drawdown = (value - cummax) / cummax
+    return drawdown.min()
 
 
 def _portfolio_value_metrics(portfolio):
@@ -597,9 +698,7 @@ def _portfolio_value_metrics(portfolio):
     returns = value.pct_change().dropna()
     sharpe = returns.mean() / returns.std() * (252 ** 0.5) if returns.std() > 0 else 0.0
 
-    cummax = value.cummax()
-    drawdown = (value - cummax) / cummax
-    max_dd = drawdown.min()
+    max_dd = _max_drawdown_from_value(value)
 
     calmar = annual_return / abs(max_dd) if max_dd != 0 else 0.0
 
@@ -675,7 +774,8 @@ def save_results(portfolio, weights, args, close):
         # 买入持有基准：期初一次性买入并持有，买入价按手续费+滑点调整，
         # 使基准与回测在交易成本口径上尽可能可比。
         adjusted_initial = benchmark.iloc[0] * (1 + args.fees + args.slippage)
-        benchmark_values.append((symbol, args.cash * benchmark / adjusted_initial))
+        bm_value = args.cash * benchmark / adjusted_initial
+        benchmark_values.append((symbol, bm_value))
 
     # 回撤（基于缩放后的净值计算，比率不变）
     cummax = chart_value.cummax()
@@ -757,6 +857,8 @@ def save_results(portfolio, weights, args, close):
         "cash": args.cash,
         "fees": args.fees,
         "slippage": args.slippage,
+        "hysteresis": getattr(args, "hysteresis", 0.0),
+        "vix_ma": getattr(args, "vix_ma", 1),
         "allocations": allocation_strs,
         "initial_value": initial_value,
         "final_value": final_value,
@@ -772,6 +874,7 @@ def save_results(portfolio, weights, args, close):
                 "symbol": symbol,
                 "final_value": float(bm_value.iloc[-1]) if not bm_value.empty else None,
                 "total_return": float(bm_value.iloc[-1] / bm_value.iloc[0] - 1) if len(bm_value) >= 2 else 0.0,
+                "max_drawdown": float(_max_drawdown_from_value(bm_value)) if len(bm_value) >= 2 else 0.0,
             }
             for symbol, bm_value in benchmark_values
         ],
@@ -796,6 +899,12 @@ def _write_backtest_html(html_path, fig, metrics):
         ("手续费率", f"{metrics['fees']:.2%}"),
         ("滑点率", f"{metrics['slippage']:.2%}"),
     ]
+    hysteresis = metrics.get("hysteresis", 0.0)
+    if hysteresis:
+        config_rows.append(("退出滞后", f"{hysteresis}"))
+    vix_ma = metrics.get("vix_ma", 1)
+    if vix_ma > 1:
+        config_rows.append(("VIX 移动平均", f"{vix_ma} 日"))
 
     thresholds = metrics.get("thresholds", ())
     allocation_rows = [
@@ -815,6 +924,16 @@ def _write_backtest_html(html_path, fig, metrics):
         ("胜率", f"{metrics['win_rate']:.2%}"),
     ]
 
+    benchmark_rows = []
+    for bm in metrics.get("benchmarks", []):
+        symbol = bm["symbol"]
+        final = bm["final_value"]
+        ret = bm["total_return"]
+        max_dd = bm.get("max_drawdown", 0.0)
+        benchmark_rows.append((f"{symbol} 期末持仓", f"{final:,.2f}" if final is not None else "—"))
+        benchmark_rows.append((f"{symbol} 总收益率", f"{ret:.2%}"))
+        benchmark_rows.append((f"{symbol} 最大回撤", f"{max_dd:.2%}"))
+
     def _grid_items(rows):
         return "\n".join(
             f"            <div class='metric-item'><span class='metric-label'>{html.escape(str(label))}</span><span class='metric-value'>{html.escape(str(val))}</span></div>"
@@ -823,6 +942,7 @@ def _write_backtest_html(html_path, fig, metrics):
 
     config_grid_items = _grid_items(config_rows)
     perf_grid_items = _grid_items(perf_rows)
+    benchmark_grid_items = _grid_items(benchmark_rows)
 
     allocation_table_rows = "\n".join(
         f"                <tr><td class='alloc-regime'>{html.escape(str(label))}</td><td class='alloc-holdings'>{html.escape(str(val))}</td></tr>"
@@ -956,6 +1076,12 @@ def _write_backtest_html(html_path, fig, metrics):
 {perf_grid_items}
             </div>
         </div>
+        <div class="metrics-panel">
+            <h2>买入持有基准</h2>
+            <div class="metrics-grid">
+{benchmark_grid_items}
+            </div>
+        </div>
         <div class="chart-panel">
             {chart_html}
         </div>
@@ -985,6 +1111,18 @@ def parse_args():
     parser.add_argument("--fees", type=float, default=DEFAULT_FEES, help="单边手续费比例")
     parser.add_argument("--slippage", type=float, default=DEFAULT_SLIPPAGE, help="滑点比例")
     parser.add_argument(
+        "--hysteresis",
+        type=float,
+        default=0.0,
+        help="退出滞后点数，默认 0。上行使用原始阈值，下行使用阈值减去 hysteresis，可减少 VIX 快速回落导致的频繁交易",
+    )
+    parser.add_argument(
+        "--vix-ma",
+        type=int,
+        default=1,
+        help="VIX 中间价 N 日移动平均窗口，默认 1（不平滑）。大于 1 时可平滑 VIX 单日尖刺，减少频繁交易",
+    )
+    parser.add_argument(
         "--benchmark",
         nargs="+",
         type=str,
@@ -1000,8 +1138,9 @@ def parse_args():
         metavar="ALLOC",
         help=(
             "自定义每个 VIX 区间的持仓分配，数量必须等于阈值数量+1。"
-            "格式：每个区间为 '资产:权重,资产:权重,...'，如 --allocations "
-            "'QQQ:0.5' 'QQQ:1.0' 'QLD:0.5,QQQ:0.5' 'QLD:1.0' 'QLD:0.5,TQQQ:0.5'"
+            "默认按杠杆从 0.5x 起每档递增 0.5x 映射到 QQQ/QLD/TQQQ。"
+            "格式：每个区间为 '资产:权重,资产:权重,...'，如 "
+            "'QQQ:1.0' 'QLD:0.5,QQQ:0.5' 'QLD:1.0' 'QLD:0.5,TQQQ:0.5' 'TQQQ:1.0'"
         ),
     )
     args = parser.parse_args()
@@ -1031,6 +1170,10 @@ def parse_args():
         parser.error("初始资金必须大于 0")
     if args.fees < 0 or args.slippage < 0:
         parser.error("手续费率和滑点率不能为负数")
+    if args.hysteresis < 0:
+        parser.error("退出滞后点数不能为负数")
+    if args.vix_ma < 1:
+        parser.error("VIX 移动平均窗口必须大于等于 1")
     return args
 
 
@@ -1046,6 +1189,8 @@ def main():
         fees=args.fees,
         slippage=args.slippage,
         allocations=args.allocations,
+        hysteresis=args.hysteresis,
+        vix_ma=args.vix_ma,
     )
 
     print_metrics(portfolio, weights, args.cash)
