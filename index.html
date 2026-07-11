@@ -8,7 +8,7 @@
     <meta http-equiv="Expires" content="0">
     <title>VIX 历史数据看板</title>
     <script src="assets/echarts.min.js"></script>
-    <script src="assets/dashboard_core.js?v=11"></script>
+    <script src="assets/dashboard_core.js?v=12"></script>
     <script src="assets/tiny-date-picker.min.js?v=1"></script>
     <link rel="stylesheet" href="assets/tiny-date-picker.min.css?v=1">
     <link rel="stylesheet" href="assets/style.css?v=17">
@@ -57,6 +57,7 @@
 
         <div id="ndx-warning" class="data-warning" style="display:none;"></div>
         <div id="spx-warning" class="data-warning" style="display:none;"></div>
+        <div id="pe-warning" class="data-warning" style="display:none;"></div>
         <div id="qqq-warning" class="data-warning" style="display:none;"></div>
         <div id="qld-warning" class="data-warning" style="display:none;"></div>
         <div id="tqqq-warning" class="data-warning" style="display:none;"></div>
@@ -106,7 +107,7 @@
             <ul>
                 <li><strong>缩放：</strong>鼠标滚轮、双指捏合，或拖动底部滑块</li>
                 <li><strong>滑动：</strong>按住图表空白处左右拖动，或使用底部滑块</li>
-                <li><strong>三图布局：</strong>上方为 VIX 历史 K 线，中间为对应历史百分位，下方为纳斯达克100与标普500历史 K 线（左轴 NDX，右轴 SPX）；三个图表共享同一个缩放与滑动条</li>
+                <li><strong>四图布局：</strong>上方为 VIX 历史 K 线，其次为对应历史百分位，再次为纳斯达克100与标普500历史 K 线（左轴 NDX，右轴 SPX），底部为纳斯达克100滚动 PE (TTM) 历史曲线；四个图表共享同一个缩放与滑动条</li>
                 <li><strong>百分位：</strong>表示当前 VIX 收盘价在全历史数据中的位置（0-100%），基于日线收盘价计算；也可切换为滚动 1/5/10 年百分位</li>
                 <li><strong>时间窗口：</strong>通过控制栏的“起始日期 / 结束日期”选择任意历史区间，图表会自动对齐到最近的交易日</li>
                 <li><strong>数据来源：</strong>VIX 来自 CBOE 官方 VIX_History.csv；纳斯达克100 来自 Yahoo Finance ^NDX；标普500 来自 Yahoo Finance ^GSPC；NDX 滚动PE 使用 QQQ（追踪纳斯达克100的ETF）的 trailingPE（TTM）作为代理指标，免费数据源暂不提供前瞻PE</li>
@@ -114,6 +115,6 @@
         </div>
     </div>
 
-    <script src="assets/dashboard.js?v=47"></script>
+    <script src="assets/dashboard.js?v=49"></script>
 </body>
 </html>

@@ -350,6 +350,95 @@ function parseNDXPE(jsonText) {
 }
 
 /**
+ * 解析 nasdaq100_pe_history.csv 文本，返回按日期升序排列的 PE 数据对象数组。
+ */
+function parsePEHistoryCSV(text) {
+    const lines = text.trim().split(/\r?\n/);
+    if (lines.length < 2) {
+        throw new Error('PE 历史 CSV 文件内容不足');
+    }
+
+    const headers = lines[0].split(',').map(h => h.trim().toLowerCase());
+    const dateIdx = headers.indexOf('date');
+    const peIdx = headers.indexOf('pe_ratio');
+
+    if (dateIdx === -1 || peIdx === -1) {
+        throw new Error('PE 历史 CSV 缺少必需的 date 或 pe_ratio 列');
+    }
+
+    const data = [];
+    for (let i = 1; i < lines.length; i++) {
+        const cols = lines[i].split(',');
+        if (cols.length < Math.max(dateIdx, peIdx) + 1) continue;
+
+        const dateStr = cols[dateIdx].trim();
+        const date = parseISODate(dateStr);
+        if (!date || isNaN(date.getTime())) continue;
+
+        const pe = parseFloat(cols[peIdx]);
+        if (isNaN(pe) || pe <= 0) continue;
+
+        data.push({
+            date: date,
+            dateStr: dateStr,
+            pe: pe
+        });
+    }
+
+    return data.sort((a, b) => a.date - b.date);
+}
+
+/**
+ * 将月度 PE 历史数据对齐到 VIX 日度序列。
+ *
+ * 对每个 VIX 交易日，取该月对应的 PE 值；若该月无数据，则沿时间轴向前查找
+ * 最近的有效月份。返回数组长度与 vixData 相同，缺失处为 null。
+ */
+function alignPEToVix(peData, vixData) {
+    if (!peData || peData.length === 0 || !vixData || vixData.length === 0) {
+        return new Array(vixData ? vixData.length : 0).fill(null);
+    }
+
+    // 构建月度 PE 映射：YYYY-MM-01 -> pe
+    const monthMap = new Map();
+    peData.forEach(d => {
+        const key = d.dateStr.slice(0, 7) + '-01';
+        monthMap.set(key, d.pe);
+    });
+
+    // 预计算所有 VIX 交易日可用的前向填充 PE
+    const sortedMonths = Array.from(monthMap.keys()).sort();
+    const aligned = [];
+    let lastPe = null;
+
+    for (let i = 0; i < vixData.length; i++) {
+        const vixDate = vixData[i].date;
+        const monthKey = vixDate.toISOString().slice(0, 7) + '-01';
+        const pe = monthMap.get(monthKey);
+
+        if (pe !== undefined) {
+            lastPe = pe;
+            aligned.push(pe);
+        } else {
+            // 向前查找最近月份
+            let found = null;
+            for (let j = sortedMonths.length - 1; j >= 0; j--) {
+                if (sortedMonths[j] <= monthKey) {
+                    found = monthMap.get(sortedMonths[j]);
+                    break;
+                }
+            }
+            if (found !== null) {
+                lastPe = found;
+            }
+            aligned.push(lastPe);
+        }
+    }
+
+    return aligned;
+}
+
+/**
  * 解析 CBOE VIX CSV 文本，返回按日期升序排列的数据对象数组。
  */
 function parseCSV(text) {
@@ -537,6 +626,8 @@ const VIXDashboardCore = {
     parseISODate,
     formatISODate,
     parseNDXPE,
+    parsePEHistoryCSV,
+    alignPEToVix,
     parseCSV,
     lowerBound,
     computeFullPercentile,

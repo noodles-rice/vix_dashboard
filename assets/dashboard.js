@@ -1,8 +1,8 @@
-// 三图布局常量（基于容器高度的百分比）
+// 四图布局常量（基于容器高度的百分比）
 const CHART_TITLE_TOP_PCT = 1;
 const CHART_GRID_TOP_PCT = 5;
-const CHART_GRID_HEIGHT_PCT = 27;
-const CHART_SECTION_GAP_PCT = 1;
+const CHART_GRID_HEIGHT_PCT = 17;
+const CHART_SECTION_GAP_PCT = 2;
 
 // 图表交互与坐标轴常量
 const GRID_LEFT_MARGIN = 80;
@@ -18,8 +18,8 @@ const SPX_DOWN_COLOR = '#fbbf24';
 const CHART_LAYOUT = (() => {
     const stride = CHART_GRID_TOP_PCT + CHART_GRID_HEIGHT_PCT + CHART_SECTION_GAP_PCT - CHART_TITLE_TOP_PCT;
     return {
-        titleTops: [0, 1, 2].map(i => `${CHART_TITLE_TOP_PCT + i * stride}%`),
-        gridTops: [0, 1, 2].map(i => `${CHART_GRID_TOP_PCT + i * stride}%`),
+        titleTops: [0, 1, 2, 3].map(i => `${CHART_TITLE_TOP_PCT + i * stride}%`),
+        gridTops: [0, 1, 2, 3].map(i => `${CHART_GRID_TOP_PCT + i * stride}%`),
         gridHeight: `${CHART_GRID_HEIGHT_PCT}%`
     };
 })();
@@ -39,6 +39,9 @@ class VIXDashboard {
         this.spxOhlc = [];
         this.spxFlatDots = [];
         this.spxError = null;
+        this.peData = [];
+        this.peSeries = [];
+        this.peError = null;
         this.ndxLogScale = true;
         this.ndxVisible = true;
         this.spxVisible = true;
@@ -389,10 +392,11 @@ class VIXDashboard {
     async loadData() {
         this.showLoading('正在加载 VIX / 指数历史数据...');
         try {
-            const [vixResponse, ndxResponse, spxResponse] = await Promise.all([
+            const [vixResponse, ndxResponse, spxResponse, peResponse] = await Promise.all([
                 fetch('data/VIX_History.csv', { cache: 'no-store' }),
                 fetch('data/NDX_History.csv', { cache: 'no-store' }),
-                fetch('data/SPX_History.csv', { cache: 'no-store' })
+                fetch('data/SPX_History.csv', { cache: 'no-store' }),
+                fetch('data/nasdaq100_pe_history.csv', { cache: 'no-store' })
             ]);
 
             if (!vixResponse.ok) {
@@ -445,6 +449,23 @@ class VIXDashboard {
                 console.warn('[VIX Dashboard] SPX load failed:', spxResponse.status);
                 this.spxError = `标普500 数据加载失败：HTTP ${spxResponse.status}`;
                 this.showSpxWarning(this.spxError);
+            }
+
+            if (peResponse.ok) {
+                try {
+                    const peText = await peResponse.text();
+                    this.peData = VIXDashboardCore.parsePEHistoryCSV(peText);
+                    this.alignPEToVix();
+                    this.hidePEWarning();
+                } catch (peErr) {
+                    console.warn('[VIX Dashboard] PE history parse failed:', peErr);
+                    this.peError = 'NDX 滚动PE 历史数据解析失败：' + peErr.message;
+                    this.showPEWarning(this.peError);
+                }
+            } else {
+                console.warn('[VIX Dashboard] PE history load failed:', peResponse.status);
+                this.peError = `NDX 滚动PE 历史数据加载失败：HTTP ${peResponse.status}`;
+                this.showPEWarning(this.peError);
             }
 
             this.hideLoading();
@@ -514,6 +535,10 @@ class VIXDashboard {
         this.spxPrevCloses = aligned.prevCloses;
     }
 
+    alignPEToVix() {
+        this.peSeries = VIXDashboardCore.alignPEToVix(this.peData, this.data);
+    }
+
     computeEventAnnotations() {
         this.eventAnnotations = [];
         if (!this.data.length) return;
@@ -570,7 +595,8 @@ class VIXDashboard {
         const sources = {
             vix: { url: 'data/last_update.json', label: 'VIX', defaultSource: 'CBOE' },
             ndx: { url: 'data/ndx_last_update.json', label: 'NDX', defaultSource: 'Yahoo Finance' },
-            spx: { url: 'data/spx_last_update.json', label: 'SPX', defaultSource: 'Yahoo Finance' }
+            spx: { url: 'data/spx_last_update.json', label: 'SPX', defaultSource: 'Yahoo Finance' },
+            ndx_pe: { url: 'data/ndx_pe_last_update.json', label: 'NDX PE', defaultSource: 'Yahoo Finance' }
         };
 
         const entries = await Promise.all(
@@ -764,6 +790,19 @@ class VIXDashboard {
         elem.style.display = 'none';
     }
 
+    showPEWarning(message) {
+        const elem = document.getElementById('pe-warning');
+        if (!elem) return;
+        elem.textContent = message;
+        elem.style.display = 'block';
+    }
+
+    hidePEWarning() {
+        const elem = document.getElementById('pe-warning');
+        if (!elem) return;
+        elem.style.display = 'none';
+    }
+
     setOverlay(content) {
         const chartDom = document.getElementById('chart');
         this.clearOverlay();
@@ -849,6 +888,7 @@ class VIXDashboard {
         const spxOhlc = this.spxOhlc;
         const spxSeriesData = spxOhlc.map(v => v === null ? '-' : v);
         const spxFlatDots = this.spxFlatDots;
+        const peSeries = this.peSeries;
 
         const currentOption = this.chart.getOption() || {};
         const currentDataZoom = currentOption.dataZoom && currentOption.dataZoom[0];
@@ -894,6 +934,16 @@ class VIXDashboard {
                     text: 'NASDAQ-100 / 标普500 历史 K 线',
                     left: 'center',
                     top: CHART_LAYOUT.titleTops[2],
+                    textStyle: {
+                        color: c.textPrimary,
+                        fontSize: 15,
+                        fontWeight: 'normal'
+                    }
+                },
+                {
+                    text: 'NASDAQ-100 滚动 PE (TTM)',
+                    left: 'center',
+                    top: CHART_LAYOUT.titleTops[3],
                     textStyle: {
                         color: c.textPrimary,
                         fontSize: 15,
@@ -965,10 +1015,14 @@ class VIXDashboard {
                         const spxPrevClose = this.spxPrevCloses ? this.spxPrevCloses[idx] : null;
                         html += formatIndexLine(spxValues, spxPrevClose, SPX_UP_COLOR, SPX_DOWN_COLOR, 'SPX');
                     }
+                    const peValue = this.peSeries[idx];
+                    if (peValue !== null && peValue !== undefined) {
+                        html += `<div style="color:${c.primary};">NDX 滚动 PE: <strong>${peValue.toFixed(2)}</strong></div>`;
+                    }
                     return html;
                 }
             },
-            // 三个 grid 使用相同的 right 边距，确保时间轴长度一致。
+            // 四个 grid 使用相同的 right 边距，确保时间轴长度一致。
             grid: [
                 {
                     left: GRID_LEFT_MARGIN,
@@ -986,6 +1040,12 @@ class VIXDashboard {
                     left: GRID_LEFT_MARGIN,
                     right: '8%',
                     top: CHART_LAYOUT.gridTops[2],
+                    height: CHART_LAYOUT.gridHeight
+                },
+                {
+                    left: GRID_LEFT_MARGIN,
+                    right: '8%',
+                    top: CHART_LAYOUT.gridTops[3],
                     height: CHART_LAYOUT.gridHeight
                 }
             ],
@@ -1014,6 +1074,14 @@ class VIXDashboard {
                     gridIndex: 2,
                     axisLine: { lineStyle: { color: c.textSubtle } },
                     axisLabel: { color: c.textMuted }
+                },
+                {
+                    type: 'category',
+                    boundaryGap: false,
+                    data: dates,
+                    gridIndex: 3,
+                    axisLine: { lineStyle: { color: c.textSubtle } },
+                    axisLabel: { show: false }
                 }
             ],
             yAxis: [
@@ -1067,12 +1135,23 @@ class VIXDashboard {
                     splitLine: { show: false },
                     nameTextStyle: { color: this.spxVisible ? c.secondary : c.textMuted },
                     logBase: 10
+                },
+                {
+                    type: 'value',
+                    name: 'PE',
+                    gridIndex: 3,
+                    position: 'left',
+                    scale: true,
+                    axisLine: { show: true, lineStyle: { color: c.primary } },
+                    axisLabel: { color: c.textMuted },
+                    splitLine: { lineStyle: { color: c.border, type: 'dashed' } },
+                    nameTextStyle: { color: c.primary }
                 }
             ],
             dataZoom: [
                 {
                     type: 'inside',
-                    xAxisIndex: [0, 1, 2],
+                    xAxisIndex: [0, 1, 2, 3],
                     ...zoomState,
                     zoomOnMouseWheel: true,
                     moveOnMouseMove: true,
@@ -1080,7 +1159,7 @@ class VIXDashboard {
                 },
                 {
                     type: 'slider',
-                    xAxisIndex: [0, 1, 2],
+                    xAxisIndex: [0, 1, 2, 3],
                     ...zoomState,
                     bottom: '2%',
                     height: 24,
@@ -1224,6 +1303,17 @@ class VIXDashboard {
                     tooltip: { show: false },
                     emphasis: { scale: false }
                 },
+                {
+                    name: 'NDX 滚动 PE',
+                    type: 'line',
+                    data: peSeries,
+                    xAxisIndex: 3,
+                    yAxisIndex: 4,
+                    smooth: false,
+                    symbol: 'none',
+                    lineStyle: { width: 2, color: c.primary },
+                    itemStyle: { color: c.primary }
+                }
             ]
         };
 
@@ -1339,7 +1429,8 @@ class VIXDashboard {
                 {},
                 { min: 0, max: PERCENTILE_AXIS_MAX },
                 makeLogRange(ndxMin, ndxMax, 'NDX'),
-                makeLogRange(spxMin, spxMax, 'SPX')
+                makeLogRange(spxMin, spxMax, 'SPX'),
+                {}
             ];
             updateOption.yAxis = yAxis;
         }

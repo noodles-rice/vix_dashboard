@@ -94,12 +94,15 @@ class TestUpdateNdxPe(unittest.TestCase):
         self.tmpdir = tempfile.TemporaryDirectory()
         self.original_path = fetch_ndx_pe.NDX_PE_PATH
         self.original_history_path = fetch_ndx_pe.NDX_PE_HISTORY_PATH
+        self.original_csv_history_path = fetch_ndx_pe.CSV_HISTORY_PATH
         fetch_ndx_pe.NDX_PE_PATH = Path(self.tmpdir.name) / "ndx_pe.json"
         fetch_ndx_pe.NDX_PE_HISTORY_PATH = Path(self.tmpdir.name) / "ndx_pe_history.json"
+        fetch_ndx_pe.CSV_HISTORY_PATH = Path(self.tmpdir.name) / "nasdaq100_pe_history.csv"
 
     def tearDown(self):
         fetch_ndx_pe.NDX_PE_PATH = self.original_path
         fetch_ndx_pe.NDX_PE_HISTORY_PATH = self.original_history_path
+        fetch_ndx_pe.CSV_HISTORY_PATH = self.original_csv_history_path
         self.tmpdir.cleanup()
 
     def test_creates_file_when_fetch_succeeds(self):
@@ -179,11 +182,17 @@ class TestUpdateNdxPe(unittest.TestCase):
 class TestUpdateHistory(unittest.TestCase):
     def setUp(self):
         self.tmpdir = tempfile.TemporaryDirectory()
+        self.original_path = fetch_ndx_pe.NDX_PE_PATH
         self.original_history_path = fetch_ndx_pe.NDX_PE_HISTORY_PATH
+        self.original_csv_history_path = fetch_ndx_pe.CSV_HISTORY_PATH
+        fetch_ndx_pe.NDX_PE_PATH = Path(self.tmpdir.name) / "ndx_pe.json"
         fetch_ndx_pe.NDX_PE_HISTORY_PATH = Path(self.tmpdir.name) / "ndx_pe_history.json"
+        fetch_ndx_pe.CSV_HISTORY_PATH = Path(self.tmpdir.name) / "nasdaq100_pe_history.csv"
 
     def tearDown(self):
+        fetch_ndx_pe.NDX_PE_PATH = self.original_path
         fetch_ndx_pe.NDX_PE_HISTORY_PATH = self.original_history_path
+        fetch_ndx_pe.CSV_HISTORY_PATH = self.original_csv_history_path
         self.tmpdir.cleanup()
 
     def test_creates_history_file(self):
@@ -257,6 +266,74 @@ class TestUpdateHistory(unittest.TestCase):
             history_data = json.load(f)
         self.assertEqual(len(history_data["history"]), 1)
         self.assertEqual(history_data["history"][0]["trailing_pe"], 30.0)
+
+
+class TestCsvHistoryMerge(unittest.TestCase):
+    def setUp(self):
+        self.tmpdir = tempfile.TemporaryDirectory()
+        self.original_csv_history_path = fetch_ndx_pe.CSV_HISTORY_PATH
+        fetch_ndx_pe.CSV_HISTORY_PATH = Path(self.tmpdir.name) / "nasdaq100_pe_history.csv"
+
+    def tearDown(self):
+        fetch_ndx_pe.CSV_HISTORY_PATH = self.original_csv_history_path
+        self.tmpdir.cleanup()
+
+    def test_creates_csv_history_file(self):
+        fetched = {
+            "forward_pe": None,
+            "trailing_pe": 30.0,
+            "source": "QQQ via Yahoo Finance",
+            "as_of": "2024-01-15",
+        }
+        result = fetch_ndx_pe._merge_into_csv_history(fetched)
+
+        self.assertEqual(result["status"], "updated")
+        self.assertEqual(result["latestMonth"], "2024-01-01")
+        self.assertTrue(fetch_ndx_pe.CSV_HISTORY_PATH.exists())
+        with open(fetch_ndx_pe.CSV_HISTORY_PATH, "r", encoding="utf-8") as f:
+            lines = f.read().strip().splitlines()
+        self.assertEqual(lines[0], "date,pe_ratio")
+        self.assertEqual(lines[1], "2024-01-01,30.0000")
+
+    def test_updates_existing_month(self):
+        fetch_ndx_pe._merge_into_csv_history(
+            {"as_of": "2024-01-10", "trailing_pe": 30.0, "source": "QQQ"}
+        )
+        result = fetch_ndx_pe._merge_into_csv_history(
+            {"as_of": "2024-01-20", "trailing_pe": 31.5, "source": "QQQ"}
+        )
+
+        self.assertEqual(result["latestMonth"], "2024-01-01")
+        history = fetch_ndx_pe._load_csv_history()
+        self.assertEqual(len(history), 1)
+        self.assertEqual(history[0][0], "2024-01-01")
+        self.assertAlmostEqual(history[0][1], 31.5)
+
+    def test_appends_new_months(self):
+        fetch_ndx_pe._merge_into_csv_history(
+            {"as_of": "2024-01-15", "trailing_pe": 30.0, "source": "QQQ"}
+        )
+        fetch_ndx_pe._merge_into_csv_history(
+            {"as_of": "2024-02-10", "trailing_pe": 31.0, "source": "QQQ"}
+        )
+
+        history = fetch_ndx_pe._load_csv_history()
+        self.assertEqual(len(history), 2)
+        self.assertEqual(history[0][0], "2024-01-01")
+        self.assertEqual(history[1][0], "2024-02-01")
+
+    def test_invalid_as_of_returns_error(self):
+        result = fetch_ndx_pe._merge_into_csv_history(
+            {"as_of": "not-a-date", "trailing_pe": 30.0, "source": "QQQ"}
+        )
+        self.assertEqual(result["status"], "error")
+
+    def test_load_csv_history_handles_corrupt_file(self):
+        with open(fetch_ndx_pe.CSV_HISTORY_PATH, "w", encoding="utf-8") as f:
+            f.write("not,valid\nthis,is,bad\n")
+
+        history = fetch_ndx_pe._load_csv_history()
+        self.assertEqual(history, [])
 
 
 if __name__ == "__main__":

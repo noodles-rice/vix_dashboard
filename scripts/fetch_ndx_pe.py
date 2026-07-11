@@ -14,6 +14,7 @@ PE 数据，用于后续绘制历史估值曲线。
 
 from __future__ import annotations
 
+import csv
 import json
 import sys
 from datetime import datetime, timezone
@@ -23,6 +24,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 DATA_DIR = BASE_DIR / "data"
 NDX_PE_PATH = DATA_DIR / "ndx_pe.json"
 NDX_PE_HISTORY_PATH = DATA_DIR / "ndx_pe_history.json"
+CSV_HISTORY_PATH = DATA_DIR / "nasdaq100_pe_history.csv"
 
 PROXY_SYMBOL = "QQQ"
 
@@ -122,6 +124,82 @@ def _update_history(fetched):
     with open(NDX_PE_HISTORY_PATH, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
     return data
+
+
+def _load_csv_history():
+    """读取 nasdaq100_pe_history.csv，返回按日期排序的 (date_str, pe) 列表。
+
+    文件不存在或解析失败时返回空列表。
+    """
+    if not CSV_HISTORY_PATH.exists():
+        return []
+
+    history = []
+    try:
+        with open(CSV_HISTORY_PATH, "r", encoding="utf-8", newline="") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                date_str = row.get("date", "").strip()
+                pe_str = row.get("pe_ratio", "").strip()
+                if not date_str or not pe_str:
+                    continue
+                try:
+                    datetime.strptime(date_str, "%Y-%m-%d")
+                    pe = float(pe_str)
+                except ValueError:
+                    continue
+                if pe <= 0:
+                    continue
+                history.append((date_str, pe))
+    except (OSError, csv.Error):
+        return []
+
+    history.sort(key=lambda item: item[0])
+    return history
+
+
+def _merge_into_csv_history(fetched):
+    """将最新获取的 PE 数据按月合并到 nasdaq100_pe_history.csv。
+
+    CSV 中每月保留一条记录（每月1日）。若该月份已存在，用最新值覆盖；
+    否则插入新记录。这样可以保证历史月度数据在每次启动时都能更新到
+    最新可用 PE。
+
+    Args:
+        fetched (dict): fetch_ndx_pe_info() 返回的数据，必须包含 as_of 和
+            trailing_pe。
+
+    Returns:
+        dict: 包含 status、message、latestMonth 的字典。
+    """
+    as_of = fetched.get("as_of")
+    trailing_pe = fetched.get("trailing_pe")
+    if not isinstance(as_of, str) or not _is_valid_number(trailing_pe):
+        return {"status": "error", "message": "缺少有效的 as_of 或 trailing_pe"}
+
+    try:
+        month_str = datetime.strptime(as_of, "%Y-%m-%d").strftime("%Y-%m-01")
+    except ValueError:
+        return {"status": "error", "message": f"as_of 日期格式无效: {as_of}"}
+
+    history = _load_csv_history()
+    history_map = {date_str: pe for date_str, pe in history}
+    history_map[month_str] = float(trailing_pe)
+
+    sorted_history = sorted(history_map.items(), key=lambda item: item[0])
+
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    with open(CSV_HISTORY_PATH, "w", encoding="utf-8", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(["date", "pe_ratio"])
+        for date_str, pe in sorted_history:
+            writer.writerow([date_str, f"{pe:.4f}"])
+
+    return {
+        "status": "updated",
+        "latestMonth": month_str,
+        "trailingPE": float(trailing_pe),
+    }
 
 
 def fetch_ndx_pe_info():
@@ -229,7 +307,19 @@ def update_ndx_pe():
     # 同时更新历史记录，按 as_of 去重
     _update_history(fetched)
 
-    return {"status": "updated" if should_write else "up_to_date", "data": fetched}
+    # 将最新 PE 按月合并到 CSV 历史文件，保证看板展示的是最新月度数据
+    csv_merge_result = _merge_into_csv_history(fetched)
+    if csv_merge_result.get("status") == "updated":
+        print(
+            f"[NDX PE] 已更新月度历史 CSV: {csv_merge_result['latestMonth']} = "
+            f"{csv_merge_result['trailingPE']:.2f}"
+        )
+
+    return {
+        "status": "updated" if should_write else "up_to_date",
+        "data": fetched,
+        "csvMerge": csv_merge_result,
+    }
 
 
 def main():

@@ -132,6 +132,51 @@ function testParseCSVRequiresColumns() {
     assert.throws(() => core.parseCSV('FOO,BAR\n1,2'), /CSV 缺少必需的 DATE 或 CLOSE 列/);
 }
 
+function testParsePEHistoryCSV() {
+    const csv = `date,pe_ratio
+2020-01-01,25.5
+2020-02-01,26.3
+bad-date,27.0
+2020-03-01,not-a-number
+2020-04-01,24.0`;
+
+    const data = core.parsePEHistoryCSV(csv);
+    assert.strictEqual(data.length, 3);
+    assert.strictEqual(data[0].dateStr, '2020-01-01');
+    assert.strictEqual(data[0].pe, 25.5);
+    assert.strictEqual(data[1].dateStr, '2020-02-01');
+    assert.strictEqual(data[2].dateStr, '2020-04-01');
+    assert.strictEqual(data[2].pe, 24.0);
+}
+
+function testParsePEHistoryCSVRequiresColumns() {
+    assert.throws(() => core.parsePEHistoryCSV('foo,bar\n1,2'), /PE 历史 CSV 缺少必需的 date 或 pe_ratio 列/);
+}
+
+function testAlignPEToVix() {
+    const peData = [
+        { dateStr: '2020-01-01', pe: 25.0 },
+        { dateStr: '2020-02-01', pe: 26.0 },
+        { dateStr: '2020-04-01', pe: 24.0 }
+    ];
+    const vixData = [
+        { date: new Date(Date.UTC(2020, 0, 2)) },
+        { date: new Date(Date.UTC(2020, 0, 15)) },
+        { date: new Date(Date.UTC(2020, 1, 3)) },
+        { date: new Date(Date.UTC(2020, 2, 10)) },
+        { date: new Date(Date.UTC(2020, 3, 1)) }
+    ];
+
+    const aligned = core.alignPEToVix(peData, vixData);
+    assert.deepStrictEqual(aligned, [25.0, 25.0, 26.0, 26.0, 24.0]);
+}
+
+function testAlignPEToVixWithEmptyData() {
+    assert.deepStrictEqual(core.alignPEToVix([], [{ dateStr: '01/01/2020' }]), [null]);
+    assert.deepStrictEqual(core.alignPEToVix([{ dateStr: '2020-01-01', pe: 25.0 }], []), []);
+    assert.deepStrictEqual(core.alignPEToVix(null, null), []);
+}
+
 function testComputeFullPercentile() {
     const data = [
         { close: 10 },
@@ -365,6 +410,10 @@ function runTests() {
         testLowerBoundDateLookup,
         testParseCSV,
         testParseCSVRequiresColumns,
+        testParsePEHistoryCSV,
+        testParsePEHistoryCSVRequiresColumns,
+        testAlignPEToVix,
+        testAlignPEToVixWithEmptyData,
         testComputeFullPercentile,
         testComputeFullPercentileWithDuplicates,
         testComputeRollingPercentile,

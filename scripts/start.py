@@ -430,6 +430,15 @@ def write_ndx_pe_update_info(info):
         "updatedAt": datetime.now(timezone.utc).isoformat(),
         **info,
     }
+    # 将 CSV 合并结果展平，方便前端直接读取
+    csv_merge = record.pop("csvMerge", None)
+    if isinstance(csv_merge, dict) and csv_merge.get("status") == "updated":
+        record["csvLatestMonth"] = csv_merge.get("latestMonth")
+        record["csvTrailingPE"] = csv_merge.get("trailingPE")
+    # 增加 latestDate 字段，使前端时间提示与 VIX/NDX/SPX 一致
+    data = record.get("data")
+    if isinstance(data, dict) and data.get("as_of"):
+        record["latestDate"] = data["as_of"]
     os.makedirs(os.path.dirname(NDX_PE_UPDATE_INFO), exist_ok=True)
     with open(NDX_PE_UPDATE_INFO, "w", encoding="utf-8") as f:
         json.dump(record, f, ensure_ascii=False, indent=2)
