@@ -311,6 +311,45 @@ function formatISODate(date) {
 }
 
 /**
+ * 解析 ndx_pe.json，返回标准化后的 PE 数据对象。
+ *
+ * 当前 Yahoo Finance 对 QQQ 等 ETF 仅提供 trailingPE（TTM），因此以 trailingPE
+ * 作为主要校验字段；forwardPE 若存在则一并返回，不存在时为 null。
+ * 对非法输入（JSON 解析失败、trailingPE 缺失、非数字或不大于零）返回 null。
+ */
+function parseNDXPE(jsonText) {
+    let payload;
+    try {
+        payload = JSON.parse(jsonText);
+    } catch (e) {
+        return null;
+    }
+    if (!payload || typeof payload !== 'object') {
+        return null;
+    }
+
+    const trailingPE = payload.trailing_pe !== undefined && payload.trailing_pe !== null
+        ? parseFloat(payload.trailing_pe)
+        : null;
+    if (!Number.isFinite(trailingPE) || trailingPE <= 0) {
+        return null;
+    }
+
+    const forwardPE = payload.forward_pe !== undefined && payload.forward_pe !== null
+        ? parseFloat(payload.forward_pe)
+        : null;
+
+    return {
+        trailingPE: trailingPE,
+        forwardPE: Number.isFinite(forwardPE) && forwardPE > 0 ? forwardPE : null,
+        source: typeof payload.source === 'string' && payload.source ? payload.source : 'Unknown',
+        asOf: payload.as_of || null,
+        fetchedAt: payload.fetched_at || null,
+        note: payload.note || null
+    };
+}
+
+/**
  * 解析 CBOE VIX CSV 文本，返回按日期升序排列的数据对象数组。
  */
 function parseCSV(text) {
@@ -497,6 +536,7 @@ const VIXDashboardCore = {
     parseDate,
     parseISODate,
     formatISODate,
+    parseNDXPE,
     parseCSV,
     lowerBound,
     computeFullPercentile,

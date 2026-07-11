@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """start.py 的单元测试。"""
 
+import json
 import socketserver
 import sys
 import tempfile
@@ -71,9 +72,15 @@ class TestMainPortValidation(unittest.TestCase):
         with patch.object(sys, "argv", argv):
             with patch.object(start, "update_vix_data", return_value={"status": "up_to_date"}):
                 with patch.object(start, "write_update_info"):
-                    with patch.object(start, "run_server") as mock_run:
-                        start.main()
-                        return mock_run.call_args[0][0]
+                    with patch.object(start, "update_ndx_data", return_value={"status": "up_to_date"}):
+                        with patch.object(start, "write_ndx_update_info"):
+                            with patch.object(start, "update_spx_data", return_value={"status": "up_to_date"}):
+                                with patch.object(start, "write_spx_update_info"):
+                                    with patch.object(start, "update_ndx_pe_data", return_value={"status": "up_to_date"}):
+                                        with patch.object(start, "write_ndx_pe_update_info"):
+                                            with patch.object(start, "run_server") as mock_run:
+                                                start.main()
+                                                return mock_run.call_args[0][0]
 
     def test_default_port(self):
         port = self._run_main_with_argv(["start.py"])
@@ -290,6 +297,48 @@ class TestUpdateSpxData(unittest.TestCase):
             self.assertEqual(info["status"], "up_to_date")
             self.assertEqual(info["latestDate"], "2024-01-04")
             self.assertEqual(info["addedRows"], 0)
+
+
+class TestUpdateNdxPeData(unittest.TestCase):
+    def test_success(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmpdir_path = Path(tmpdir)
+            pe_info = tmpdir_path / "ndx_pe_last_update.json"
+
+            original_info = start.NDX_PE_UPDATE_INFO
+            try:
+                start.NDX_PE_UPDATE_INFO = str(pe_info)
+                with patch.object(
+                    start.fetch_ndx_pe, "update_ndx_pe", return_value={"status": "updated", "data": {"forward_pe": 25.5}}
+                ):
+                    info = start.update_ndx_pe_data()
+                    start.write_ndx_pe_update_info(info)
+            finally:
+                start.NDX_PE_UPDATE_INFO = original_info
+
+            self.assertEqual(info["status"], "updated")
+            self.assertTrue(pe_info.exists())
+            with open(pe_info, "r", encoding="utf-8") as f:
+                record = json.load(f)
+            self.assertIn("updatedAt", record)
+
+    def test_fetch_error(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmpdir_path = Path(tmpdir)
+            pe_info = tmpdir_path / "ndx_pe_last_update.json"
+
+            original_info = start.NDX_PE_UPDATE_INFO
+            try:
+                start.NDX_PE_UPDATE_INFO = str(pe_info)
+                with patch.object(
+                    start.fetch_ndx_pe, "update_ndx_pe", side_effect=RuntimeError("network error")
+                ):
+                    info = start.update_ndx_pe_data()
+            finally:
+                start.NDX_PE_UPDATE_INFO = original_info
+
+            self.assertEqual(info["status"], "fetch_error")
+            self.assertEqual(info["message"], "network error")
 
 
 class TestUpdateNdxData(unittest.TestCase):

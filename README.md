@@ -9,13 +9,15 @@
 | `data/VIX_History.csv` | CBOE 官方 VIX 日线数据（运行时下载） |
 | `data/NDX_History.csv` | Yahoo Finance 纳斯达克100指数（^NDX）日线数据（运行时下载） |
 | `data/SPX_History.csv` | Yahoo Finance 标普500指数（^GSPC）日线数据（运行时下载） |
+| `data/ndx_pe.json` | 纳斯达克100 滚动市盈率（TTM）代理数据（由 `scripts/fetch_ndx_pe.py` 维护） |
 | `data/last_update.json` | VIX 数据更新时间与状态记录（由 `scripts/start.py` 维护） |
 | `data/ndx_last_update.json` | 纳斯达克100 数据更新状态记录 |
 | `index.html` | 看板主页面 |
 | `assets/dashboard.js` | 图表逻辑、交互事件、更新时间展示 |
 | `assets/dashboard_core.js` | 可测试的纯函数核心：CSV 解析、日期解析、百分位计算 |
 | `assets/style.css` | 页面样式 |
-| `scripts/start.py` | 启动脚本：自动更新 VIX / 纳斯达克100 数据并启动本地 HTTP 服务 |
+| `scripts/start.py` | 启动脚本：自动更新 VIX / 纳斯达克100 / NDX PE 数据并启动本地 HTTP 服务 |
+| `scripts/fetch_ndx_pe.py` | 获取 QQQ 滚动市盈率并保存到 `data/ndx_pe.json` |
 | `scripts/backtest.py` | VectorBT 回测脚本：VIX 驱动 QQQ/QLD/TQQQ 杠杆轮动 |
 | `scripts/optimize.py` | VIX 阈值参数扫描脚本 |
 | `tests/test_start.py` | `scripts/start.py` 的单元测试 |

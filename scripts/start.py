@@ -15,6 +15,8 @@ from pathlib import Path
 from urllib.error import URLError
 from urllib.request import Request, urlopen
 
+import fetch_ndx_pe
+
 CBOE_VIX_URL = (
     "https://cdn.cboe.com/api/global/us_indices/daily_prices/VIX_History.csv"
 )
@@ -29,6 +31,7 @@ LOCAL_SPX_CSV = str(BASE_DIR / "data" / "SPX_History.csv")
 UPDATE_INFO = str(BASE_DIR / "data" / "last_update.json")
 NDX_UPDATE_INFO = str(BASE_DIR / "data" / "ndx_last_update.json")
 SPX_UPDATE_INFO = str(BASE_DIR / "data" / "spx_last_update.json")
+NDX_PE_UPDATE_INFO = str(BASE_DIR / "data" / "ndx_pe_last_update.json")
 DEFAULT_PORT = 8080
 
 
@@ -412,6 +415,27 @@ def write_spx_update_info(info):
     print(f"[SPX Updater] 更新时间已记录到 {SPX_UPDATE_INFO}")
 
 
+def update_ndx_pe_data():
+    """更新纳斯达克100前瞻PE代理数据，失败时不阻塞启动。"""
+    try:
+        return fetch_ndx_pe.update_ndx_pe()
+    except Exception as e:
+        print(f"[NDX PE Updater] 更新异常: {e}", file=sys.stderr)
+        return {"status": "fetch_error", "message": str(e)}
+
+
+def write_ndx_pe_update_info(info):
+    """将纳斯达克100前瞻PE更新信息写入 ndx_pe_last_update.json。"""
+    record = {
+        "updatedAt": datetime.now(timezone.utc).isoformat(),
+        **info,
+    }
+    os.makedirs(os.path.dirname(NDX_PE_UPDATE_INFO), exist_ok=True)
+    with open(NDX_PE_UPDATE_INFO, "w", encoding="utf-8") as f:
+        json.dump(record, f, ensure_ascii=False, indent=2)
+    print(f"[NDX PE Updater] 更新时间已记录到 {NDX_PE_UPDATE_INFO}")
+
+
 class CORSRequestHandler(http.server.SimpleHTTPRequestHandler):
     """简单的 HTTP 请求处理器，允许本地开发跨域请求。
 
@@ -472,6 +496,12 @@ def main():
         write_spx_update_info(spx_info)
     except OSError as e:
         print(f"[SPX Updater] 记录更新时间失败: {e}", file=sys.stderr)
+
+    ndx_pe_info = update_ndx_pe_data()
+    try:
+        write_ndx_pe_update_info(ndx_pe_info)
+    except OSError as e:
+        print(f"[NDX PE Updater] 记录更新时间失败: {e}", file=sys.stderr)
 
     run_server(port)
 

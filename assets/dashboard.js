@@ -198,6 +198,7 @@ class VIXDashboard {
         this.bindEvents();
         this.loadData();
         this.loadUpdateInfo();
+        this.loadNdxPE();
 
         this.resizeHandler = () => {
             if (this.chart) this.chart.resize();
@@ -700,6 +701,44 @@ class VIXDashboard {
         const titles = entries.map(e => e.title).filter(Boolean).join('\n\n');
         elem.innerHTML = `<div style="font-size:0.75rem;line-height:1.5;">${parts}</div>`;
         elem.title = titles;
+    }
+
+    async loadNdxPE() {
+        const elem = document.getElementById('statNdxPE');
+        if (!elem) return;
+
+        try {
+            const response = await fetch('data/ndx_pe.json', { cache: 'no-store' });
+            if (!response.ok) {
+                if (response.status === 404) {
+                    elem.textContent = '未记录';
+                    elem.title = '尚未生成 ndx_pe.json，请运行 scripts/fetch_ndx_pe.py 或 scripts/start.py';
+                } else {
+                    throw new Error(`HTTP ${response.status}`);
+                }
+                return;
+            }
+            const text = await response.text();
+            const pe = VIXDashboardCore.parseNDXPE(text);
+            if (!pe) {
+                elem.textContent = '无效';
+                elem.title = 'ndx_pe.json 内容解析失败';
+                return;
+            }
+            elem.textContent = pe.trailingPE.toFixed(2);
+            const lines = [
+                `滚动 PE (TTM): ${pe.trailingPE.toFixed(2)}`,
+                pe.forwardPE ? `前瞻 PE: ${pe.forwardPE.toFixed(2)}` : '前瞻 PE: 暂无（免费数据源未提供）',
+                `数据来源: ${pe.source}`,
+                pe.asOf ? `数据日期: ${pe.asOf}` : '',
+                pe.fetchedAt ? `获取时间: ${this.formatDateTime(pe.fetchedAt)}` : ''
+            ];
+            elem.title = lines.filter(Boolean).join('\n');
+        } catch (error) {
+            console.warn('[VIX Dashboard] NDX PE load failed:', error);
+            elem.textContent = '未知';
+            elem.title = '加载失败：' + error.message;
+        }
     }
 
     formatDate(isoString) {

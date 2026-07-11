@@ -36,6 +36,65 @@ function testFormatISODate() {
     assert.strictEqual(core.formatISODate(new Date(Date.UTC(1990, 0, 2))), '1990-01-02');
 }
 
+function testParseNDXPE() {
+    const payload = JSON.stringify({
+        forward_pe: null,
+        trailing_pe: 30.0,
+        source: 'QQQ via Yahoo Finance',
+        as_of: '2024-06-15',
+        fetched_at: '2024-06-15T12:00:00+00:00'
+    });
+    const result = core.parseNDXPE(payload);
+    assert.strictEqual(result.trailingPE, 30.0);
+    assert.strictEqual(result.forwardPE, null);
+    assert.strictEqual(result.source, 'QQQ via Yahoo Finance');
+    assert.strictEqual(result.asOf, '2024-06-15');
+}
+
+function testParseNDXPEWithForwardPE() {
+    const payload = JSON.stringify({
+        forward_pe: 25.5,
+        trailing_pe: 30.0,
+        source: 'QQQ via Yahoo Finance',
+        as_of: '2024-06-15'
+    });
+    const result = core.parseNDXPE(payload);
+    assert.strictEqual(result.trailingPE, 30.0);
+    assert.strictEqual(result.forwardPE, 25.5);
+}
+
+function testParseNDXPEWithStringNumbers() {
+    const payload = JSON.stringify({
+        forward_pe: null,
+        trailing_pe: '30.00',
+        source: 'QQQ via Yahoo Finance',
+        as_of: '2024-06-15'
+    });
+    const result = core.parseNDXPE(payload);
+    assert.strictEqual(result.trailingPE, 30);
+    assert.strictEqual(result.forwardPE, null);
+}
+
+function testParseNDXPEInvalidJSON() {
+    assert.strictEqual(core.parseNDXPE('not-json'), null);
+}
+
+function testParseNDXPEInvalidTrailingPE() {
+    assert.strictEqual(core.parseNDXPE(JSON.stringify({ trailing_pe: null })), null);
+    assert.strictEqual(core.parseNDXPE(JSON.stringify({ trailing_pe: 0 })), null);
+    assert.strictEqual(core.parseNDXPE(JSON.stringify({ trailing_pe: -1 })), null);
+    assert.strictEqual(core.parseNDXPE(JSON.stringify({ trailing_pe: 'abc' })), null);
+    assert.strictEqual(core.parseNDXPE(JSON.stringify({})), null);
+}
+
+function testParseNDXPEInvalidSource() {
+    const base = { trailing_pe: 30.0 };
+    assert.strictEqual(core.parseNDXPE(JSON.stringify({ ...base, source: null })).source, 'Unknown');
+    assert.strictEqual(core.parseNDXPE(JSON.stringify({ ...base, source: 123 })).source, 'Unknown');
+    assert.strictEqual(core.parseNDXPE(JSON.stringify({ ...base, source: '' })).source, 'Unknown');
+    assert.strictEqual(core.parseNDXPE(JSON.stringify(base)).source, 'Unknown');
+}
+
 function testLowerBoundDateLookup() {
     const data = [
         { date: new Date(Date.UTC(2020, 0, 1)), close: 10 },
@@ -297,6 +356,12 @@ function runTests() {
         testParseDate,
         testParseISODate,
         testFormatISODate,
+        testParseNDXPE,
+        testParseNDXPEWithForwardPE,
+        testParseNDXPEWithStringNumbers,
+        testParseNDXPEInvalidJSON,
+        testParseNDXPEInvalidTrailingPE,
+        testParseNDXPEInvalidSource,
         testLowerBoundDateLookup,
         testParseCSV,
         testParseCSVRequiresColumns,
