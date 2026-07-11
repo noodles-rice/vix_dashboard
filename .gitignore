@@ -15,6 +15,7 @@ data/*_last_update.json
 
 # Runtime generated valuation metrics
 data/ndx_pe.json
+data/ndx_pe_history.json
 
 # Runtime generated market histories (downloaded on first use)
 data/*_History.csv

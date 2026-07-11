@@ -5,6 +5,9 @@
 ETF 仅提供 trailingPE（TTM），不提供 forwardPE。因此本脚本保存 QQQ 的 trailingPE
 （TTM）作为纳斯达克100估值的代理指标，并预留 forward_pe 字段供未来接入付费数据源时使用。
 
+本脚本同时维护一份历史记录（ndx_pe_history.json），按日期去重保存每次获取的
+PE 数据，用于后续绘制历史估值曲线。
+
 运行方式:
     source /root/vix/.venv/bin/activate && python scripts/fetch_ndx_pe.py
 """
@@ -19,6 +22,7 @@ from pathlib import Path
 BASE_DIR = Path(__file__).resolve().parent.parent
 DATA_DIR = BASE_DIR / "data"
 NDX_PE_PATH = DATA_DIR / "ndx_pe.json"
+NDX_PE_HISTORY_PATH = DATA_DIR / "ndx_pe_history.json"
 
 PROXY_SYMBOL = "QQQ"
 
@@ -43,6 +47,81 @@ def _is_valid_number(value):
         return num == num and num != float("inf") and num != float("-inf")
     except (TypeError, ValueError):
         return False
+
+
+def _load_history():
+    """读取已有的 ndx_pe_history.json；不存在或损坏时返回空历史结构。"""
+    empty = {
+        "source": f"{PROXY_SYMBOL} via Yahoo Finance",
+        "metric": "trailing_pe_ttm",
+        "history": [],
+    }
+    if not NDX_PE_HISTORY_PATH.exists():
+        return empty
+    try:
+        with open(NDX_PE_HISTORY_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return empty
+
+    if not isinstance(data, dict):
+        return empty
+    history = data.get("history")
+    if not isinstance(history, list):
+        return empty
+
+    # 过滤掉无效条目，保留有效字段
+    cleaned = []
+    for entry in history:
+        if not isinstance(entry, dict):
+            continue
+        as_of = entry.get("as_of")
+        trailing_pe = entry.get("trailing_pe")
+        if not isinstance(as_of, str) or not _is_valid_number(trailing_pe):
+            continue
+        cleaned.append(
+            {
+                "as_of": as_of,
+                "trailing_pe": float(trailing_pe),
+                "forward_pe": float(entry["forward_pe"])
+                if _is_valid_number(entry.get("forward_pe"))
+                else None,
+            }
+        )
+    data["history"] = cleaned
+    return data
+
+
+def _update_history(fetched):
+    """将新获取的 PE 数据合并到历史记录中，按日期去重并排序。
+
+    Args:
+        fetched (dict): fetch_ndx_pe_info() 返回的数据。
+
+    Returns:
+        dict: 更新后的历史记录结构。
+    """
+    data = _load_history()
+    new_entry = {
+        "as_of": fetched["as_of"],
+        "trailing_pe": fetched["trailing_pe"],
+        "forward_pe": fetched["forward_pe"],
+    }
+
+    history = data.get("history", [])
+    # 按 as_of 去重：如果当天已存在，替换为最新值
+    history = [entry for entry in history if entry.get("as_of") != new_entry["as_of"]]
+    history.append(new_entry)
+    history.sort(key=lambda entry: entry["as_of"])
+
+    data["history"] = history
+    data["updated_at"] = datetime.now(timezone.utc).isoformat()
+    data["source"] = fetched["source"]
+
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    with open(NDX_PE_HISTORY_PATH, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+    return data
 
 
 def fetch_ndx_pe_info():
@@ -97,7 +176,10 @@ def fetch_ndx_pe_info():
 
 
 def update_ndx_pe():
-    """更新本地 ndx_pe.json 中的滚动市盈率（TTM）数据，失败时保留旧数据。
+    """更新本地 ndx_pe.json 和 ndx_pe_history.json，失败时保留旧数据。
+
+    除了保存最新的滚动市盈率快照，还会把本次结果按日期去重后追加到
+    ndx_pe_history.json，用于后续绘制历史估值曲线。
 
     Returns:
         dict: 包含 status、data 的更新结果字典。
@@ -143,6 +225,9 @@ def update_ndx_pe():
         print(f"[NDX PE] 已更新: {', '.join(parts)}")
     else:
         print("[NDX PE] 本地数据已是最新，无需更新")
+
+    # 同时更新历史记录，按 as_of 去重
+    _update_history(fetched)
 
     return {"status": "updated" if should_write else "up_to_date", "data": fetched}
 
