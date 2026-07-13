@@ -2,19 +2,20 @@
 """回撤驱动 QQQ/QLD/TQQQ 杠杆轮动策略回测。
 
 策略逻辑：
-- 初始满仓 QQQ。
+- 初始持仓 50% QQQ + 50% QLD（有效杠杆约 1.5x）。
 - 以组合持仓市值高点（High Water Mark）为锚，跟踪回撤。
-- 回撤加深时单向加杠杆（只加不减）：
-    max_dd < 10%      -> 100% QQQ
-    10% <= max_dd < 15% -> 80% QQQ + 20% QLD
-    15% <= max_dd < 20% -> 50% QQQ + 50% QLD
-    20% <= max_dd < 25% -> 100% QLD
-    25% <= max_dd < 30% -> 80% QLD + 20% TQQQ
-    30% <= max_dd < 35% -> 60% QLD + 40% TQQQ
-    35% <= max_dd < 40% -> 40% QLD + 60% TQQQ
-    40% <= max_dd < 45% -> 20% QLD + 80% TQQQ
-    max_dd >= 45%      -> 100% TQQQ
-- 当组合从回撤中修复时，维持已达成的最高杠杆档位（单向棘轮）。
+- 回撤加深时逐步增加杠杆以博取反弹：
+    max_dd < 8%       -> 50% QQQ + 50% QLD
+     8% <= max_dd < 14% -> 20% QQQ + 80% QLD
+    14% <= max_dd < 20% -> 100% QLD
+    20% <= max_dd < 28% -> 60% QLD + 40% TQQQ
+    28% <= max_dd < 36% -> 20% QLD + 80% TQQQ
+    max_dd >= 36%      -> 100% TQQQ
+- 降杠杆（滞后修复带）：
+    当当前回撤修复到低于当前档位下界 × deleverage_ratio 时，
+    每天降一级杠杆。例如当前在 20% 档（下界 20%），
+    deleverage_ratio=0.5 时，需 current_dd < 10% 才会降级。
+    --deleverage-ratio 0 退化为原单向棘轮行为。
 
 运行方式:
     source /root/vix/.venv/bin/activate && python scripts/drawdown_rotation_strategy.py
@@ -23,16 +24,12 @@
 from __future__ import annotations
 
 import argparse
-import html
-import json
 import math
 import sys
 from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
-import plotly.graph_objects as go
-import plotly.subplots as sp
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from backtest import (
@@ -48,41 +45,68 @@ import vectorbt as vbt
 
 
 def _allocation_for_max_dd(max_dd: float) -> dict[str, float]:
-    """根据历史最大回撤返回目标资产配置（权重和不超过 1.0）。"""
-    if max_dd < 0.10:
-        return {"QQQ": 1.0}
-    if max_dd < 0.15:
-        return {"QQQ": 0.8, "QLD": 0.2}
-    if max_dd < 0.20:
+    """根据回撤返回目标资产配置（50/50 基准，回撤加深时逐步增加杠杆）。"""
+    if max_dd < 0.08:
         return {"QQQ": 0.5, "QLD": 0.5}
-    if max_dd < 0.25:
+    if max_dd < 0.14:
+        return {"QQQ": 0.2, "QLD": 0.8}
+    if max_dd < 0.20:
         return {"QLD": 1.0}
-    if max_dd < 0.30:
-        return {"QLD": 0.8, "TQQQ": 0.2}
-    if max_dd < 0.35:
+    if max_dd < 0.28:
         return {"QLD": 0.6, "TQQQ": 0.4}
-    if max_dd < 0.40:
-        return {"QLD": 0.4, "TQQQ": 0.6}
-    if max_dd < 0.45:
+    if max_dd < 0.36:
         return {"QLD": 0.2, "TQQQ": 0.8}
     return {"TQQQ": 1.0}
 
 
-def build_drawdown_weights(close: pd.DataFrame) -> pd.DataFrame:
+# 回撤档位上界（从低到高，共 5 个边界 = 6 档）
+_TIER_BOUNDS = [0.08, 0.14, 0.20, 0.28, 0.36]
+
+
+def _get_tier(dd: float) -> int:
+    """返回回撤值所在的档位索引（0=最安全，8=最深）。"""
+    for i, bound in enumerate(_TIER_BOUNDS):
+        if dd < bound:
+            return i
+    return len(_TIER_BOUNDS)
+
+
+def _tier_to_dd(tier: int) -> float:
+    """将档位索引映射回回撤值（取档位中位数），用于调用 _allocation_for_max_dd。"""
+    if tier <= 0:
+        return 0.04  # 第 0 档 [0, 0.08) 中位数
+    if tier >= len(_TIER_BOUNDS):
+        return 0.40  # 最深档 [0.36, ∞)
+    lower = _TIER_BOUNDS[tier - 1]
+    upper = _TIER_BOUNDS[tier]
+    return (lower + upper) / 2.0
+
+
+def build_drawdown_weights(close: pd.DataFrame, deleverage_ratio: float = 0.3,
+                          ma_window: int = 200) -> pd.DataFrame:
     """构造回撤驱动策略的每日目标权重。
 
-    第 0 天初始权重为 100% QQQ。后续每一天的权重基于截至上一交易日收盘
-    所达到过的最大回撤确定，避免前视偏差。组合净值与 HWM 通过独立迭代
-    模拟，用于生成信号；实际净值由 vectorbt 根据目标权重与交易成本计算。
+    加杠杆：current_dd 突破更高档位 + QQQ 在 MA 上方时，active_tier 立即跟进。
+    MA 过滤避免在熊市（价格 < MA200）中加杠杆。ma_window=0 关闭过滤。
+    降杠杆：current_dd 修复到低于当前档位下界 × deleverage_ratio 时，
+    每天最多降一级。降杠杆不受 MA 过滤影响。
     """
     weights = pd.DataFrame(0.0, index=close.index, columns=close.columns)
     portfolio_value = 1.0
     hwm = 1.0
     max_dd = 0.0
+    active_tier = 0  # 当前有效杠杆档位，可升可降
     prev_target: dict[str, float] | None = None
 
+    # 预计算 QQQ 移动平均（用于牛熊过滤）
+    qqq_ma = None
+    if ma_window > 0 and "QQQ" in close.columns:
+        qqq_ma = close["QQQ"].rolling(ma_window).mean()
+
     for i, date in enumerate(close.index):
-        target = _allocation_for_max_dd(max_dd)
+        # 用 active_tier 决定当日目标权重（而非直接使用 max_dd）
+        effective_dd = _tier_to_dd(active_tier)
+        target = _allocation_for_max_dd(effective_dd)
         for asset, w in target.items():
             if asset in weights.columns:
                 weights.loc[date, asset] = w
@@ -101,23 +125,41 @@ def build_drawdown_weights(close: pd.DataFrame) -> pd.DataFrame:
             current_dd = (hwm - portfolio_value) / hwm if math.isfinite(hwm) and hwm > 0 else 0.0
             max_dd = max(max_dd, current_dd)
 
+            # 升级：current_dd 突破更高档位 + MA 过滤（熊市禁止加杠杆）
+            current_tier = _get_tier(current_dd)
+            if current_tier > active_tier:
+                allow_upgrade = True
+                if qqq_ma is not None:
+                    qqq_price = close.loc[date, "QQQ"]
+                    ma_val = qqq_ma.loc[date]
+                    # MA 尚未就绪（数据不足）→ 放行；已就绪且价格在 MA 下方 → 阻止
+                    if pd.notna(ma_val) and qqq_price < ma_val:
+                        allow_upgrade = False
+                if allow_upgrade:
+                    active_tier = current_tier
+
+            # 降级：current_dd 修复过阈值时每天降一级
+            if active_tier > 0 and deleverage_ratio > 0:
+                lower_bound = _TIER_BOUNDS[active_tier - 1]
+                if current_dd < lower_bound * deleverage_ratio:
+                    active_tier -= 1
+
         prev_target = target
 
     return weights
 
 
-def run_and_report(start: str, end: str, cash: float, fees: float, slippage: float):
+def run_and_report(start: str, end: str, cash: float, fees: float, slippage: float,
+                   deleverage_ratio: float = 0.3, ma_window: int = 200):
     """执行回测并保存 HTML/JSON 报告。"""
-    BASE_DIR = Path(__file__).resolve().parent.parent
-    OUTPUT_DIR = BASE_DIR / "output"
-    OUTPUT_DIR.mkdir(exist_ok=True)
+    import report_utils
 
     close = fetch_etf_data(DEFAULT_SYMBOLS, start, end)
     if isinstance(close, pd.Series):
         close = close.to_frame()
     close.columns = [str(c).upper() for c in close.columns]
 
-    weights = build_drawdown_weights(close)
+    weights = build_drawdown_weights(close, deleverage_ratio, ma_window)
 
     portfolio = vbt.Portfolio.from_orders(
         close=close,
@@ -141,86 +183,23 @@ def run_and_report(start: str, end: str, cash: float, fees: float, slippage: flo
     scale = cash / first_value
     chart_value = value * scale
 
-    benchmark_values = []
-    for symbol in ["QQQ", "QLD", "TQQQ"]:
-        if symbol not in close.columns:
-            continue
-        bm = close[symbol].dropna()
-        if bm.empty or pd.isna(bm.iloc[0]) or bm.iloc[0] == 0:
-            continue
-        adjusted_initial = bm.iloc[0] * (1 + fees + slippage)
-        benchmark_values.append((symbol, cash * bm / adjusted_initial))
-
-    cummax = chart_value.cummax()
-    drawdown = (chart_value - cummax) / cummax
-
-    fig = sp.make_subplots(
-        rows=3,
-        cols=1,
-        shared_xaxes=True,
-        vertical_spacing=0.08,
-        subplot_titles=("组合净值 vs 买入持有 QQQ/QLD/TQQQ", "持仓权重", "回撤"),
-        row_heights=[0.5, 0.25, 0.25],
+    benchmark_values = report_utils.build_benchmark_values(
+        close, cash, fees, slippage, ["QQQ", "QLD", "TQQQ"]
     )
 
-    fig.add_trace(
-        go.Scatter(x=chart_value.index, y=chart_value, name="轮动策略", line=dict(color="#1f77b4")),
-        row=1,
-        col=1,
+    fig = report_utils.build_plotly_chart(
+        chart_value, weights, benchmark_values,
+        "回撤驱动 QQQ/QLD/TQQQ 杠杆轮动策略回测"
     )
-    for symbol, bm_value in benchmark_values:
-        fig.add_trace(
-            go.Scatter(
-                x=bm_value.index,
-                y=bm_value,
-                name=f"买入持有 {symbol}",
-                line=dict(dash="dash"),
-            ),
-            row=1,
-            col=1,
-        )
-
-    for col in weights.columns:
-        fig.add_trace(
-            go.Scatter(
-                x=weights.index,
-                y=weights[col],
-                name=f"权重 {col}",
-                stackgroup="weights",
-                line=dict(width=0.5),
-            ),
-            row=2,
-            col=1,
-        )
-
-    fig.add_trace(
-        go.Scatter(
-            x=drawdown.index,
-            y=drawdown * 100,
-            name="回撤 %",
-            fill="tozeroy",
-            line=dict(color="#d62728"),
-        ),
-        row=3,
-        col=1,
-    )
-
-    fig.update_layout(
-        title="回撤驱动 QQQ/QLD/TQQQ 杠杆轮动策略回测",
-        hovermode="x unified",
-        height=900,
-        showlegend=True,
-    )
-    fig.update_yaxes(title_text="净值", row=1, col=1)
-    fig.update_yaxes(title_text="权重", row=2, col=1)
-    fig.update_yaxes(title_text="回撤 %", row=3, col=1)
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     prefix = f"drawdown_rotation_{timestamp}"
 
-    perf_rows = [
+    config_rows = [
         ("策略", "回撤驱动杠杆轮动"),
         ("回测区间", f"{close.index[0].date()} ~ {close.index[-1].date()}"),
+    ]
+    perf_rows = [
         ("初始资金", f"{initial_value:,.2f}"),
         ("期末持仓", f"{final_value:,.2f}"),
         ("总收益率", f"{metrics['total_return']:.2%}"),
@@ -232,147 +211,41 @@ def run_and_report(start: str, end: str, cash: float, fees: float, slippage: flo
         ("胜率", f"{float(portfolio.trades.win_rate().mean()):.2%}"),
     ]
 
-    benchmark_rows = [
-        (f"买入持有 {symbol}", f"{bm_value.iloc[-1]:,.2f} ({bm_value.iloc[-1]/bm_value.iloc[0]-1:.2%})")
-        for symbol, bm_value in benchmark_values
-    ]
+    benchmark_rows = []
+    for symbol, bm_value in benchmark_values:
+        final = bm_value.iloc[-1]
+        total_ret = final / bm_value.iloc[0] - 1
+        max_dd = report_utils.max_drawdown_from_series(bm_value)
+        benchmark_rows.append((f"买入持有 {symbol}", f"{final:,.2f} ({total_ret:.2%})"))
+        benchmark_rows.append((f"{symbol} 最大回撤", f"{max_dd:.2%}"))
 
-    def _grid_items(rows):
-        return "\n".join(
-            f"            <div class='metric-item'><span class='metric-label'>{html.escape(str(label))}</span><span class='metric-value'>{html.escape(str(val))}</span></div>"
-            for label, val in rows
-        )
+    panels = [
+        ("策略配置", report_utils.grid_items(config_rows)),
+        ("回测绩效", report_utils.grid_items(perf_rows)),
+        ("买入持有基准", report_utils.grid_items(benchmark_rows)),
+    ]
 
     chart_html = fig.to_html(full_html=False, include_plotlyjs="cdn", div_id="backtest-chart")
 
-    page_html = f"""<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>回撤驱动杠杆轮动策略回测</title>
-    <style>
-        * {{ box-sizing: border-box; }}
-        body {{
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-            margin: 0;
-            padding: 16px;
-            background: #f8f9fa;
-            color: #1f2937;
-        }}
-        .container {{
-            max-width: 1200px;
-            margin: 0 auto;
-        }}
-        h1 {{
-            font-size: 20px;
-            margin: 0 0 12px 0;
-            color: #111827;
-        }}
-        .metrics-panel {{
-            background: #fff;
-            border-radius: 10px;
-            box-shadow: 0 1px 3px rgba(0,0,0,0.08);
-            padding: 14px 16px;
-            margin-bottom: 16px;
-        }}
-        .metrics-panel h2 {{
-            font-size: 15px;
-            margin: 0 0 10px 0;
-            color: #374151;
-        }}
-        .metrics-grid {{
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 0 24px;
-        }}
-        .metric-item {{
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 5px 0;
-            border-bottom: 1px solid #f3f4f6;
-            font-size: 13px;
-        }}
-        .metric-label {{
-            color: #6b7280;
-            font-weight: 500;
-            margin-right: 12px;
-            white-space: nowrap;
-        }}
-        .metric-value {{
-            color: #111827;
-            font-weight: 600;
-            text-align: right;
-            white-space: nowrap;
-        }}
-        .chart-panel {{
-            background: #fff;
-            border-radius: 10px;
-            box-shadow: 0 1px 3px rgba(0,0,0,0.08);
-            padding: 12px;
-        }}
-        @media (max-width: 480px) {{
-            .metrics-grid {{ grid-template-columns: 1fr; }}
-        }}
-    </style>
-</head>
-<body>
-    <div class="container">
-        <h1>回撤驱动杠杆轮动策略回测</h1>
-        <div class="metrics-panel">
-            <h2>策略配置</h2>
-            <div class="metrics-grid">
-{_grid_items(perf_rows[:2])}
-            </div>
-        </div>
-        <div class="metrics-panel">
-            <h2>回测绩效</h2>
-            <div class="metrics-grid">
-{_grid_items(perf_rows[2:])}
-            </div>
-        </div>
-        <div class="metrics-panel">
-            <h2>买入持有基准</h2>
-            <div class="metrics-grid">
-{_grid_items(benchmark_rows)}
-            </div>
-        </div>
-        <div class="chart-panel">
-            {chart_html}
-        </div>
-    </div>
-</body>
-</html>"""
+    html_path = report_utils.OUTPUT_DIR / f"{prefix}.html"
+    report_utils.write_html_report(html_path, "回撤驱动 QLD/TQQQ 杠杆轮动策略回测", panels, chart_html)
 
-    html_path = OUTPUT_DIR / f"{prefix}.html"
-    with open(html_path, "w", encoding="utf-8") as f:
-        f.write(page_html)
+    json_path = report_utils.OUTPUT_DIR / f"{prefix}_metrics.json"
+    report_utils.write_json_report(json_path, {
+        "strategy": "回撤驱动杠杆轮动",
+        "start": str(close.index[0].date()),
+        "end": str(close.index[-1].date()),
+        "initial_value": initial_value,
+        "final_value": final_value,
+        "total_return": float(metrics["total_return"]),
+        "annualized_return": float(metrics["annual_return"]),
+        "sharpe_ratio": float(metrics["sharpe"]),
+        "max_drawdown": float(metrics["max_drawdown"]),
+        "calmar_ratio": float(metrics["calmar"]),
+        "trade_count": int(portfolio.trades.count().sum()),
+        "win_rate": float(portfolio.trades.win_rate().mean()),
+    })
 
-    json_path = OUTPUT_DIR / f"{prefix}_metrics.json"
-    with open(json_path, "w", encoding="utf-8") as f:
-        json.dump(
-            {
-                "strategy": "回撤驱动杠杆轮动",
-                "start": str(close.index[0].date()),
-                "end": str(close.index[-1].date()),
-                "initial_value": initial_value,
-                "final_value": final_value,
-                "total_return": float(metrics["total_return"]),
-                "annualized_return": float(metrics["annual_return"]),
-                "sharpe_ratio": float(metrics["sharpe"]),
-                "max_drawdown": float(metrics["max_drawdown"]),
-                "calmar_ratio": float(metrics["calmar"]),
-                "trade_count": int(portfolio.trades.count().sum()),
-                "win_rate": float(portfolio.trades.win_rate().mean()),
-            },
-            f,
-            ensure_ascii=False,
-            indent=2,
-        )
-
-    print(f"[DrawdownRotation] HTML 报告: {html_path}")
-    print(f"[DrawdownRotation] JSON 指标: {json_path}")
     print(f"[DrawdownRotation] 总收益: {metrics['total_return']:.2%}, 最大回撤: {metrics['max_drawdown']:.2%}")
 
 
@@ -383,9 +256,14 @@ def main():
     parser.add_argument("--cash", type=float, default=DEFAULT_CASH, help="初始资金")
     parser.add_argument("--fees", type=float, default=DEFAULT_FEES, help="单边手续费比例")
     parser.add_argument("--slippage", type=float, default=DEFAULT_SLIPPAGE, help="滑点比例")
+    parser.add_argument("--deleverage-ratio", type=float, default=0.3,
+                        help="回撤修复比例，用于决定降杠杆的滞后阈值（0=禁用，退化为单向棘轮）")
+    parser.add_argument("--ma-window", type=int, default=200,
+                        help="QQQ 移动平均窗口，价格在 MA 下方时禁止加杠杆（0=关闭过滤）")
     args = parser.parse_args()
 
-    run_and_report(args.start, args.end, args.cash, args.fees, args.slippage)
+    run_and_report(args.start, args.end, args.cash, args.fees, args.slippage,
+                   args.deleverage_ratio, args.ma_window)
 
 
 if __name__ == "__main__":

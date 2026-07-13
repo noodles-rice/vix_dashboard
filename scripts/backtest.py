@@ -34,8 +34,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-import plotly.graph_objects as go
-import plotly.subplots as sp
+
 import vectorbt as vbt
 import yfinance as yf
 
@@ -673,9 +672,8 @@ def run_backtest(
 
 def _max_drawdown_from_value(value):
     """根据价值序列计算最大回撤（返回负数，如 -0.2 表示 -20%）。"""
-    cummax = value.cummax()
-    drawdown = (value - cummax) / cummax
-    return drawdown.min()
+    import report_utils
+    return report_utils.max_drawdown_from_series(value)
 
 
 def _portfolio_value_metrics(portfolio):
@@ -756,92 +754,20 @@ def save_results(portfolio, weights, args, close):
     if isinstance(benchmark_symbols, str):
         benchmark_symbols = [benchmark_symbols]
 
-    benchmark_values = []
-    for symbol in benchmark_symbols:
-        if symbol not in close.columns:
-            print(
-                f"[Backtest] 警告: 基准 {symbol} 不在回测标的中，跳过该基准曲线",
-                file=sys.stderr,
-            )
-            continue
-        benchmark = close[symbol].dropna()
-        if benchmark.empty or pd.isna(benchmark.iloc[0]) or benchmark.iloc[0] == 0:
-            print(
-                f"[Backtest] 警告: 基准 {symbol} 数据无效，跳过该基准曲线",
-                file=sys.stderr,
-            )
-            continue
-        # 买入持有基准：期初一次性买入并持有，买入价按手续费+滑点调整，
-        # 使基准与回测在交易成本口径上尽可能可比。
-        adjusted_initial = benchmark.iloc[0] * (1 + args.fees + args.slippage)
-        bm_value = args.cash * benchmark / adjusted_initial
-        benchmark_values.append((symbol, bm_value))
+    import report_utils
 
-    # 回撤（基于缩放后的净值计算，比率不变）
-    cummax = chart_value.cummax()
-    drawdown = (chart_value - cummax) / cummax
+    benchmark_values = report_utils.build_benchmark_values(
+        close, args.cash, args.fees, args.slippage, benchmark_symbols
+    )
 
     benchmark_title = "、".join(s for s, _ in benchmark_values) if benchmark_values else "买入持有"
-    fig = sp.make_subplots(
-        rows=3,
-        cols=1,
-        shared_xaxes=True,
-        vertical_spacing=0.08,
-        subplot_titles=(f"组合净值 vs 买入持有 {benchmark_title}", "持仓权重", "回撤"),
-        row_heights=[0.5, 0.25, 0.25],
+    fig = report_utils.build_plotly_chart(
+        chart_value, weights, benchmark_values,
+        f"VIX 驱动 QQQ/QLD/TQQQ 杠杆轮动回测"
     )
-
-    fig.add_trace(
-        go.Scatter(x=chart_value.index, y=chart_value, name="轮动策略", line=dict(color="#1f77b4")),
-        row=1,
-        col=1,
-    )
-    for symbol, benchmark_value in benchmark_values:
-        fig.add_trace(
-            go.Scatter(
-                x=benchmark_value.index,
-                y=benchmark_value,
-                name=f"买入持有 {symbol}",
-                line=dict(dash="dash"),
-            ),
-            row=1,
-            col=1,
-        )
-
-    for col in weights.columns:
-        fig.add_trace(
-            go.Scatter(
-                x=weights.index,
-                y=weights[col],
-                name=f"权重 {col}",
-                stackgroup="weights",
-                line=dict(width=0.5),
-            ),
-            row=2,
-            col=1,
-        )
-
-    fig.add_trace(
-        go.Scatter(
-            x=drawdown.index,
-            y=drawdown * 100,
-            name="回撤 %",
-            fill="tozeroy",
-            line=dict(color="#d62728"),
-        ),
-        row=3,
-        col=1,
-    )
-
     fig.update_layout(
-        title="VIX 驱动 QQQ/QLD/TQQQ 杠杆轮动回测",
-        hovermode="x unified",
-        height=900,
-        showlegend=True,
+        title=f"VIX 驱动 QQQ/QLD/TQQQ 杠杆轮动回测",
     )
-    fig.update_yaxes(title_text="净值", row=1, col=1)
-    fig.update_yaxes(title_text="权重", row=2, col=1)
-    fig.update_yaxes(title_text="回撤 %", row=3, col=1)
 
     n_regimes = len(args.thresholds) + 1
     allocations = getattr(args, "allocations", None)
@@ -880,18 +806,7 @@ def save_results(portfolio, weights, args, close):
         ],
     }
 
-    html_path = OUTPUT_DIR / f"{prefix}.html"
-    _write_backtest_html(html_path, fig, metrics)
-    print(f"\n[Backtest] 权益曲线已保存: {html_path}")
-
-    json_path = OUTPUT_DIR / f"{prefix}_metrics.json"
-    with open(json_path, "w", encoding="utf-8") as f:
-        json.dump(metrics, f, ensure_ascii=False, indent=2)
-    print(f"[Backtest] 绩效指标已保存: {json_path}")
-
-
-def _write_backtest_html(html_path, fig, metrics):
-    """将 Plotly 图表与紧凑绩效表格组合成完整 HTML 页面。"""
+    # 构建 HTML 报告面板
     config_rows = [
         ("回测标的", ", ".join(metrics["symbols"])),
         ("VIX 阈值", str(metrics["thresholds"])),
@@ -934,163 +849,40 @@ def _write_backtest_html(html_path, fig, metrics):
         benchmark_rows.append((f"{symbol} 总收益率", f"{ret:.2%}"))
         benchmark_rows.append((f"{symbol} 最大回撤", f"{max_dd:.2%}"))
 
-    def _grid_items(rows):
-        return "\n".join(
-            f"            <div class='metric-item'><span class='metric-label'>{html.escape(str(label))}</span><span class='metric-value'>{html.escape(str(val))}</span></div>"
-            for label, val in rows
-        )
-
-    config_grid_items = _grid_items(config_rows)
-    perf_grid_items = _grid_items(perf_rows)
-    benchmark_grid_items = _grid_items(benchmark_rows)
-
-    allocation_table_rows = "\n".join(
+    allocation_table_html = "\n".join(
         f"                <tr><td class='alloc-regime'>{html.escape(str(label))}</td><td class='alloc-holdings'>{html.escape(str(val))}</td></tr>"
         for label, val in allocation_rows
     )
-
-    chart_html = fig.to_html(full_html=False, include_plotlyjs=True, div_id="backtest-chart")
-
-    page_html = f"""<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>VIX 杠杆轮动回测结果</title>
-    <style>
-        * {{ box-sizing: border-box; }}
-        body {{
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-            margin: 0;
-            padding: 16px;
-            background: #f8f9fa;
-            color: #1f2937;
-        }}
-        .container {{
-            max-width: 1200px;
-            margin: 0 auto;
-        }}
-        h1 {{
-            font-size: 20px;
-            margin: 0 0 12px 0;
-            color: #111827;
-        }}
-        .metrics-panel {{
-            background: #fff;
-            border-radius: 10px;
-            box-shadow: 0 1px 3px rgba(0,0,0,0.08);
-            padding: 14px 16px;
-            margin-bottom: 16px;
-        }}
-        .metrics-panel h2 {{
-            font-size: 15px;
-            margin: 0 0 10px 0;
-            color: #374151;
-        }}
-        .metrics-grid {{
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 0 24px;
-        }}
-        .metric-item {{
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 5px 0;
-            border-bottom: 1px solid #f3f4f6;
-            font-size: 13px;
-        }}
-        .metric-label {{
-            color: #6b7280;
-            font-weight: 500;
-            margin-right: 12px;
-            white-space: nowrap;
-        }}
-        .metric-value {{
-            color: #111827;
-            font-weight: 600;
-            text-align: right;
-            white-space: nowrap;
-        }}
-        .alloc-table {{
-            width: 100%;
-            border-collapse: collapse;
-            font-size: 13px;
-        }}
-        .alloc-table th,
-        .alloc-table td {{
-            padding: 6px 8px;
-            text-align: left;
-            border-bottom: 1px solid #f3f4f6;
-        }}
-        .alloc-table th {{
-            color: #6b7280;
-            font-weight: 500;
-            background: #f9fafb;
-        }}
-        .alloc-regime {{
-            color: #374151;
-            font-weight: 500;
-            white-space: nowrap;
-            width: 40%;
-        }}
-        .alloc-holdings {{
-            color: #111827;
-            font-weight: 600;
-        }}
-        .chart-panel {{
-            background: #fff;
-            border-radius: 10px;
-            box-shadow: 0 1px 3px rgba(0,0,0,0.08);
-            padding: 12px;
-        }}
-        @media (max-width: 480px) {{
-            .metrics-grid {{ grid-template-columns: 1fr; }}
-            .alloc-regime {{ white-space: normal; }}
-        }}
-    </style>
-</head>
-<body>
-    <div class="container">
-        <h1>VIX 驱动 QQQ/QLD/TQQQ 杠杆轮动回测</h1>
-        <div class="metrics-panel">
-            <h2>策略配置</h2>
-            <div class="metrics-grid">
-{config_grid_items}
-            </div>
-        </div>
-        <div class="metrics-panel">
-            <h2>区间持仓配置</h2>
-            <table class="alloc-table">
+    allocation_panel_html = f"""<table class="alloc-table">
                 <thead>
                     <tr><th>VIX 区间</th><th>持仓配置</th></tr>
                 </thead>
                 <tbody>
-{allocation_table_rows}
+{allocation_table_html}
                 </tbody>
-            </table>
-        </div>
-        <div class="metrics-panel">
-            <h2>回测绩效</h2>
-            <div class="metrics-grid">
-{perf_grid_items}
-            </div>
-        </div>
-        <div class="metrics-panel">
-            <h2>买入持有基准</h2>
-            <div class="metrics-grid">
-{benchmark_grid_items}
-            </div>
-        </div>
-        <div class="chart-panel">
-            {chart_html}
-        </div>
-    </div>
-</body>
-</html>"""
+            </table>"""
 
-    with open(html_path, "w", encoding="utf-8") as f:
-        f.write(page_html)
+    panels = [
+        ("策略配置", report_utils.grid_items(config_rows)),
+        ("区间持仓配置", allocation_panel_html),
+        ("回测绩效", report_utils.grid_items(perf_rows)),
+        ("买入持有基准", report_utils.grid_items(benchmark_rows)),
+    ]
+
+    chart_html = fig.to_html(full_html=False, include_plotlyjs=True, div_id="backtest-chart")
+
+    html_path = OUTPUT_DIR / f"{prefix}.html"
+    report_utils.write_html_report(
+        html_path, "VIX 驱动 QQQ/QLD/TQQQ 杠杆轮动回测", panels, chart_html,
+        plotly_js=True,
+    )
+
+    json_path = OUTPUT_DIR / f"{prefix}_metrics.json"
+    report_utils.write_json_report(json_path, metrics)
+
+    print(f"\n[Backtest] 权益曲线已保存: {html_path}")
+    print(f"[Backtest] 绩效指标已保存: {json_path}")
+
 
 
 
