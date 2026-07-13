@@ -422,16 +422,16 @@ class VIXDashboard {
                     const ndxText = await ndxResponse.text();
                     this.ndxData = VIXDashboardCore.parseCSV(ndxText);
                     this.alignNdxToVix();
-                    this.hideNdxWarning();
+                    this.hideWarning('ndx-warning');
                 } catch (ndxErr) {
                     console.warn('[VIX Dashboard] NDX parse failed:', ndxErr);
                     this.ndxError = '纳斯达克100 数据解析失败：' + ndxErr.message;
-                    this.showNdxWarning(this.ndxError);
+                    this.showWarning('ndx-warning', this.ndxError);
                 }
             } else {
                 console.warn('[VIX Dashboard] NDX load failed:', ndxResponse.status);
                 this.ndxError = `纳斯达克100 数据加载失败：HTTP ${ndxResponse.status}`;
-                this.showNdxWarning(this.ndxError);
+                this.showWarning('ndx-warning', this.ndxError);
             }
 
             if (spxResponse.ok) {
@@ -439,16 +439,16 @@ class VIXDashboard {
                     const spxText = await spxResponse.text();
                     this.spxData = VIXDashboardCore.parseCSV(spxText);
                     this.alignSpxToVix();
-                    this.hideSpxWarning();
+                    this.hideWarning('spx-warning');
                 } catch (spxErr) {
                     console.warn('[VIX Dashboard] SPX parse failed:', spxErr);
                     this.spxError = '标普500 数据解析失败：' + spxErr.message;
-                    this.showSpxWarning(this.spxError);
+                    this.showWarning('spx-warning', this.spxError);
                 }
             } else {
                 console.warn('[VIX Dashboard] SPX load failed:', spxResponse.status);
                 this.spxError = `标普500 数据加载失败：HTTP ${spxResponse.status}`;
-                this.showSpxWarning(this.spxError);
+                this.showWarning('spx-warning', this.spxError);
             }
 
             if (peResponse.ok) {
@@ -456,16 +456,16 @@ class VIXDashboard {
                     const peText = await peResponse.text();
                     this.peData = VIXDashboardCore.parsePEHistoryCSV(peText);
                     this.alignPEToVix();
-                    this.hidePEWarning();
+                    this.hideWarning('pe-warning');
                 } catch (peErr) {
                     console.warn('[VIX Dashboard] PE history parse failed:', peErr);
                     this.peError = 'NDX 滚动PE 历史数据解析失败：' + peErr.message;
-                    this.showPEWarning(this.peError);
+                    this.showWarning('pe-warning', this.peError);
                 }
             } else {
                 console.warn('[VIX Dashboard] PE history load failed:', peResponse.status);
                 this.peError = `NDX 滚动PE 历史数据加载失败：HTTP ${peResponse.status}`;
-                this.showPEWarning(this.peError);
+                this.showWarning('pe-warning', this.peError);
             }
 
             this.hideLoading();
@@ -764,41 +764,15 @@ class VIXDashboard {
         this.setOverlay(container);
     }
 
-    showNdxWarning(message) {
-        const elem = document.getElementById('ndx-warning');
+    showWarning(id, message) {
+        const elem = document.getElementById(id);
         if (!elem) return;
         elem.textContent = message;
         elem.style.display = 'block';
     }
 
-    hideNdxWarning() {
-        const elem = document.getElementById('ndx-warning');
-        if (!elem) return;
-        elem.style.display = 'none';
-    }
-
-    showSpxWarning(message) {
-        const elem = document.getElementById('spx-warning');
-        if (!elem) return;
-        elem.textContent = message;
-        elem.style.display = 'block';
-    }
-
-    hideSpxWarning() {
-        const elem = document.getElementById('spx-warning');
-        if (!elem) return;
-        elem.style.display = 'none';
-    }
-
-    showPEWarning(message) {
-        const elem = document.getElementById('pe-warning');
-        if (!elem) return;
-        elem.textContent = message;
-        elem.style.display = 'block';
-    }
-
-    hidePEWarning() {
-        const elem = document.getElementById('pe-warning');
+    hideWarning(id) {
+        const elem = document.getElementById(id);
         if (!elem) return;
         elem.style.display = 'none';
     }
@@ -1077,7 +1051,7 @@ class VIXDashboard {
                 },
                 {
                     type: 'category',
-                    boundaryGap: false,
+                    boundaryGap: true,
                     data: dates,
                     gridIndex: 3,
                     axisLine: { lineStyle: { color: c.textSubtle } },
@@ -1418,12 +1392,13 @@ class VIXDashboard {
                 }
             }
             const makeLogRange = (min, max, label) => {
-                if (min <= 0 && min !== Infinity) {
-                    console.warn(`${label} 可见区间存在非正价格，无法收紧对数纵轴:`, min);
+                if (min <= 0 || !Number.isFinite(min) || !Number.isFinite(max)) {
+                    if (min <= 0 && Number.isFinite(min)) {
+                        console.warn(`${label} 可见区间存在非正价格，无法收紧对数纵轴:`, min);
+                    }
+                    return {};
                 }
-                return min > 0
-                    ? { min: min / NDX_LOG_AXIS_PADDING, max: max * NDX_LOG_AXIS_PADDING }
-                    : {};
+                return { min: min / NDX_LOG_AXIS_PADDING, max: max * NDX_LOG_AXIS_PADDING };
             };
             const yAxis = [
                 {},
