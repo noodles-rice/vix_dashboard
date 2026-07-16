@@ -13,6 +13,9 @@ screenshot.png
 data/last_update.json
 data/*_last_update.json
 
+# User-generated trading journal (may contain sensitive trading records)
+data/trading_journal.json
+
 # Runtime generated valuation metrics
 data/ndx_pe.json
 data/ndx_pe_history.json

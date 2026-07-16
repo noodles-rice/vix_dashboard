@@ -12,6 +12,7 @@
 | `data/ndx_pe.json` | 纳斯达克100 滚动市盈率（TTM）代理数据（由 `scripts/fetch_ndx_pe.py` 维护） |
 | `data/last_update.json` | VIX 数据更新时间与状态记录（由 `scripts/start.py` 维护） |
 | `data/ndx_last_update.json` | 纳斯达克100 数据更新状态记录 |
+| `data/trading_journal.json` | 交易复盘记录（用户数据，`.gitignore` 排除，首次保存时自动创建） |
 | `index.html` | 看板主页面 |
 | `assets/dashboard.js` | 图表逻辑、交互事件、更新时间展示 |
 | `assets/dashboard_core.js` | 可测试的纯函数核心：CSV 解析、日期解析、百分位计算 |
@@ -65,6 +66,13 @@ http://localhost:8080
 - **统计卡片**：展示最新日期、最新 VIX、最新百分位、历史最高/最低/均值、数据更新时间
 - **历史事件标注**：VIX 历史 K 线上方标注了日内最高价 > 35 的重大事件（共 29 个），主要事件显示文字标签，次要事件显示黄色标记点，鼠标悬停可查看事件详情
 - **交互提示**：鼠标悬停同时显示对应日期的 VIX 开高低收、百分位与纳斯达克100开高低收
+- **交易复盘记录表**：页面底部提供可编辑的交易日志表格，支持
+  - 本地 `localStorage` 自动保存，刷新不丢失
+  - 点击“保存”写入服务端 `data/trading_journal.json`
+  - 点击“导出 JSON”下载当前记录备份
+  - 结果列根据“成功/失败/盈/亏”自动着色
+
+> 注意：`data/trading_journal.json` 为本地用户数据，已加入 `.gitignore`，请勿手动 `git add` 该文件。
 
 ## VIX 经济含义区间
 

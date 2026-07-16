@@ -32,6 +32,19 @@ UPDATE_INFO = str(BASE_DIR / "data" / "last_update.json")
 NDX_UPDATE_INFO = str(BASE_DIR / "data" / "ndx_last_update.json")
 SPX_UPDATE_INFO = str(BASE_DIR / "data" / "spx_last_update.json")
 NDX_PE_UPDATE_INFO = str(BASE_DIR / "data" / "ndx_pe_last_update.json")
+TRADING_JOURNAL_PATH = str(BASE_DIR / "data" / "trading_journal.json")
+MAX_JOURNAL_SIZE = 1024 * 1024  # 1 MB
+JOURNAL_FIELDS = {
+    "date",
+    "action",
+    "stockName",
+    "externalFactor",
+    "internalFactor",
+    "result",
+    "analysis",
+    "improvement",
+    "notes",
+}
 DEFAULT_PORT = 8080
 
 
@@ -445,6 +458,28 @@ def write_ndx_pe_update_info(info):
     print(f"[NDX PE Updater] 更新时间已记录到 {NDX_PE_UPDATE_INFO}")
 
 
+def _validate_journal_payload(data):
+    """校验交易日志请求体结构。
+
+    要求顶层为 dict，records 为 list，每条记录为 dict 且字段值均为字符串。
+    返回 (ok, error_message)。
+    """
+    if not isinstance(data, dict):
+        return False, "请求体必须是 JSON 对象"
+    records = data.get("records")
+    if not isinstance(records, list):
+        return False, "records 必须是数组"
+    for idx, rec in enumerate(records):
+        if not isinstance(rec, dict):
+            return False, f"records[{idx}] 必须是对象"
+        for field, value in rec.items():
+            if field not in JOURNAL_FIELDS:
+                return False, f"records[{idx}] 包含未知字段: {field}"
+            if not isinstance(value, str):
+                return False, f"records[{idx}].{field} 必须是字符串"
+    return True, None
+
+
 class CORSRequestHandler(http.server.SimpleHTTPRequestHandler):
     """简单的 HTTP 请求处理器，允许本地开发跨域请求。
 
@@ -457,6 +492,66 @@ class CORSRequestHandler(http.server.SimpleHTTPRequestHandler):
     def end_headers(self):
         self.send_header("Access-Control-Allow-Origin", "*")
         super().end_headers()
+
+    def do_OPTIONS(self):
+        self.send_response(204)
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.end_headers()
+
+    def do_POST(self):
+        # 交易日志保存接口：POST /data/trading_journal.json
+        if self.path.rstrip("/") == "/data/trading_journal.json":
+            try:
+                content_length = int(self.headers.get("Content-Length", 0))
+                if content_length > MAX_JOURNAL_SIZE:
+                    self.send_response(413)
+                    self.send_header("Content-Type", "application/json; charset=utf-8")
+                    self.end_headers()
+                    self.wfile.write(
+                        json.dumps({"ok": False, "error": "请求体过大"}, ensure_ascii=False).encode("utf-8")
+                    )
+                    return
+
+                body = self.rfile.read(content_length)
+                data = json.loads(body.decode("utf-8"))
+
+                ok, error_msg = _validate_journal_payload(data)
+                if not ok:
+                    self.send_response(400)
+                    self.send_header("Content-Type", "application/json; charset=utf-8")
+                    self.end_headers()
+                    self.wfile.write(json.dumps({"ok": False, "error": error_msg}, ensure_ascii=False).encode("utf-8"))
+                    return
+
+                # 格式化写入
+                os.makedirs(os.path.dirname(TRADING_JOURNAL_PATH), exist_ok=True)
+                with open(TRADING_JOURNAL_PATH, "w", encoding="utf-8") as f:
+                    json.dump(data, f, ensure_ascii=False, indent=2)
+                    f.write("\n")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.end_headers()
+                self.wfile.write(json.dumps({"ok": True}, ensure_ascii=False).encode("utf-8"))
+                print(f"[HTTP] 交易日志已保存 ({len(data.get('records', []))} 条记录)")
+            except json.JSONDecodeError as e:
+                self.send_response(400)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.end_headers()
+                self.wfile.write(json.dumps({"ok": False, "error": "JSON 解析失败"}, ensure_ascii=False).encode("utf-8"))
+                print(f"[HTTP] 交易日志保存失败: JSON 解析失败 - {e}", file=sys.stderr)
+            except Exception as e:
+                self.send_response(500)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.end_headers()
+                self.wfile.write(
+                    json.dumps({"ok": False, "error": "服务器内部错误"}, ensure_ascii=False).encode("utf-8")
+                )
+                print(f"[HTTP] 交易日志保存失败: {e}", file=sys.stderr)
+        else:
+            self.send_response(404)
+            self.end_headers()
 
     def log_message(self, fmt, *args):
         # 保持输出简洁

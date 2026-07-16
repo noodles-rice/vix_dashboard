@@ -10,7 +10,8 @@ import unittest
 from io import StringIO
 from pathlib import Path
 from unittest.mock import patch
-from urllib.request import urlopen
+from urllib.error import HTTPError
+from urllib.request import Request, urlopen
 
 import pandas as pd
 
@@ -132,6 +133,170 @@ class TestServerRoot(unittest.TestCase):
                     server.server_close()
             finally:
                 start.BASE_DIR = original_base_dir
+
+
+class TestTradingJournalEndpoints(unittest.TestCase):
+    """验证交易日志 POST / OPTIONS 端点。"""
+
+    def _start_server(self):
+        server = socketserver.TCPServer(("127.0.0.1", 0), start.CORSRequestHandler)
+        port = server.server_address[1]
+        thread = threading.Thread(target=server.serve_forever)
+        thread.daemon = True
+        thread.start()
+        return server, port
+
+    def _make_payload(self, records=None):
+        return json.dumps({"records": records or []}, ensure_ascii=False).encode("utf-8")
+
+    def _post(self, port, path, body):
+        req = Request(f"http://127.0.0.1:{port}{path}", data=body, method="POST")
+        req.add_header("Content-Type", "application/json")
+        return urlopen(req)
+
+    def test_options_returns_204_with_cors_headers(self):
+        original_base_dir = start.BASE_DIR
+        with tempfile.TemporaryDirectory() as tmpdir:
+            start.BASE_DIR = Path(tmpdir)
+            (Path(tmpdir) / "index.html").write_text("<html></html>", encoding="utf-8")
+            try:
+                server, port = self._start_server()
+                try:
+                    req = Request(
+                        f"http://127.0.0.1:{port}/data/trading_journal.json",
+                        method="OPTIONS",
+                    )
+                    with urlopen(req) as resp:
+                        self.assertEqual(resp.status, 204)
+                        self.assertEqual(resp.headers.get("Access-Control-Allow-Origin"), "*")
+                        self.assertIn("POST", resp.headers.get("Access-Control-Allow-Methods", ""))
+                        self.assertIn("Content-Type", resp.headers.get("Access-Control-Allow-Headers", ""))
+                finally:
+                    server.shutdown()
+                    server.server_close()
+            finally:
+                start.BASE_DIR = original_base_dir
+
+    def test_post_saves_journal(self):
+        original_base_dir = start.BASE_DIR
+        original_journal_path = start.TRADING_JOURNAL_PATH
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmpdir_path = Path(tmpdir)
+            start.BASE_DIR = tmpdir_path
+            start.TRADING_JOURNAL_PATH = str(tmpdir_path / "trading_journal.json")
+            (tmpdir_path / "index.html").write_text("<html></html>", encoding="utf-8")
+            try:
+                server, port = self._start_server()
+                try:
+                    records = [{"date": "2026-07-14", "action": "买入", "stockName": "TQQQ"}]
+                    body = self._make_payload(records)
+                    with self._post(port, "/data/trading_journal.json", body) as resp:
+                        self.assertEqual(resp.status, 200)
+                        response = json.loads(resp.read().decode("utf-8"))
+                        self.assertTrue(response["ok"])
+
+                    saved = json.loads(Path(start.TRADING_JOURNAL_PATH).read_text(encoding="utf-8"))
+                    self.assertEqual(saved["records"], records)
+                finally:
+                    server.shutdown()
+                    server.server_close()
+            finally:
+                start.BASE_DIR = original_base_dir
+                start.TRADING_JOURNAL_PATH = original_journal_path
+
+    def test_post_wrong_path_returns_404(self):
+        original_base_dir = start.BASE_DIR
+        with tempfile.TemporaryDirectory() as tmpdir:
+            start.BASE_DIR = Path(tmpdir)
+            (Path(tmpdir) / "index.html").write_text("<html></html>", encoding="utf-8")
+            try:
+                server, port = self._start_server()
+                try:
+                    with self.assertRaises(HTTPError) as ctx:
+                        self._post(port, "/data/other.json", self._make_payload())
+                    self.assertEqual(ctx.exception.code, 404)
+                finally:
+                    server.shutdown()
+                    server.server_close()
+            finally:
+                start.BASE_DIR = original_base_dir
+
+    def test_post_invalid_json_returns_400(self):
+        original_base_dir = start.BASE_DIR
+        with tempfile.TemporaryDirectory() as tmpdir:
+            start.BASE_DIR = Path(tmpdir)
+            (Path(tmpdir) / "index.html").write_text("<html></html>", encoding="utf-8")
+            try:
+                server, port = self._start_server()
+                try:
+                    body = b"not-json"
+                    with self.assertRaises(HTTPError) as ctx:
+                        self._post(port, "/data/trading_journal.json", body)
+                    self.assertEqual(ctx.exception.code, 400)
+                finally:
+                    server.shutdown()
+                    server.server_close()
+            finally:
+                start.BASE_DIR = original_base_dir
+
+    def test_post_invalid_structure_returns_400(self):
+        original_base_dir = start.BASE_DIR
+        with tempfile.TemporaryDirectory() as tmpdir:
+            start.BASE_DIR = Path(tmpdir)
+            (Path(tmpdir) / "index.html").write_text("<html></html>", encoding="utf-8")
+            try:
+                server, port = self._start_server()
+                try:
+                    body = json.dumps({"records": [{"badField": "x"}]}).encode("utf-8")
+                    with self.assertRaises(HTTPError) as ctx:
+                        self._post(port, "/data/trading_journal.json", body)
+                    self.assertEqual(ctx.exception.code, 400)
+                finally:
+                    server.shutdown()
+                    server.server_close()
+            finally:
+                start.BASE_DIR = original_base_dir
+
+    def test_post_non_string_value_returns_400(self):
+        original_base_dir = start.BASE_DIR
+        with tempfile.TemporaryDirectory() as tmpdir:
+            start.BASE_DIR = Path(tmpdir)
+            (Path(tmpdir) / "index.html").write_text("<html></html>", encoding="utf-8")
+            try:
+                server, port = self._start_server()
+                try:
+                    body = json.dumps({"records": [{"date": 2026}]}).encode("utf-8")
+                    with self.assertRaises(HTTPError) as ctx:
+                        self._post(port, "/data/trading_journal.json", body)
+                    self.assertEqual(ctx.exception.code, 400)
+                finally:
+                    server.shutdown()
+                    server.server_close()
+            finally:
+                start.BASE_DIR = original_base_dir
+
+    def test_post_oversized_body_returns_413(self):
+        original_base_dir = start.BASE_DIR
+        original_max_size = start.MAX_JOURNAL_SIZE
+        with tempfile.TemporaryDirectory() as tmpdir:
+            start.BASE_DIR = Path(tmpdir)
+            # 临时调低阈值，避免上传 1 MB 数据导致客户端 Broken pipe
+            start.MAX_JOURNAL_SIZE = 100
+            (Path(tmpdir) / "index.html").write_text("<html></html>", encoding="utf-8")
+            try:
+                server, port = self._start_server()
+                try:
+                    huge = "x" * 200
+                    body = json.dumps({"records": [{"notes": huge}]}).encode("utf-8")
+                    with self.assertRaises(HTTPError) as ctx:
+                        self._post(port, "/data/trading_journal.json", body)
+                    self.assertEqual(ctx.exception.code, 413)
+                finally:
+                    server.shutdown()
+                    server.server_close()
+            finally:
+                start.BASE_DIR = original_base_dir
+                start.MAX_JOURNAL_SIZE = original_max_size
 
 
 class TestUpdateSpxData(unittest.TestCase):

@@ -160,6 +160,321 @@ class VIXDashboard {
         container.appendChild(table);
     }
 
+    // ── Trading Journal (contenteditable + localStorage) ──
+
+    JOURNAL_STORAGE_KEY = 'trading_journal';
+    JOURNAL_SEED_URL = 'data/trading_journal.json';
+    JOURNAL_FIELD_LABELS = {
+        date: '操作时间',
+        action: '操作',
+        stockName: '个股名称',
+        externalFactor: '外部因素',
+        internalFactor: '内部因素',
+        result: '成功/失败',
+        analysis: '原因分析',
+        improvement: '改进措施',
+        notes: '备注/其他'
+    };
+    JOURNAL_RESULT_SUCCESS_MARKERS = ['成功', '盈'];
+    JOURNAL_RESULT_FAILURE_MARKERS = ['失败', '亏'];
+
+    async loadTradingJournal() {
+        const container = document.getElementById('journalTableContainer');
+        if (!container) return;
+
+        // 1. Try localStorage first
+        let data = this._journalLoadFromStorage();
+
+        // 2. Fall back to seed JSON file
+        if (!data) {
+            try {
+                const response = await fetch(this.JOURNAL_SEED_URL, { cache: 'no-store' });
+                if (response.ok) {
+                    const json = await response.json();
+                    if (json && Array.isArray(json.records)) {
+                        data = json.records;
+                        this._journalSaveToStorage(data);
+                    }
+                }
+            } catch (err) {
+                console.warn('[VIX Dashboard] Trading journal seed load failed:', err);
+            }
+        }
+
+        // 3. Render
+        if (!data || data.length === 0) {
+            container.innerHTML = '<div class="journal-empty">暂无交易记录，点击「+ 添加记录」开始</div>';
+            data = [];
+        } else {
+            this._journalRenderTable(container, data);
+        }
+
+        // 4. Bind toolbar events
+        this._journalBindToolbar(container, data);
+    }
+
+    _journalLoadFromStorage() {
+        try {
+            const raw = localStorage.getItem(this.JOURNAL_STORAGE_KEY);
+            if (raw) {
+                const parsed = JSON.parse(raw);
+                if (parsed && Array.isArray(parsed.records)) {
+                    return parsed.records;
+                }
+            }
+        } catch (e) { /* corrupted, ignore */ }
+        return null;
+    }
+
+    _journalSaveToStorage(records) {
+        try {
+            localStorage.setItem(this.JOURNAL_STORAGE_KEY, JSON.stringify({ records }));
+        } catch (e) {
+            console.warn('[VIX Dashboard] Failed to save journal to localStorage:', e);
+        }
+    }
+
+    async _journalSaveToFile(records) {
+        try {
+            const resp = await fetch('data/trading_journal.json', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ records })
+            });
+            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+            return true;
+        } catch (e) {
+            console.warn('[VIX Dashboard] Failed to save journal to file:', e);
+            return false;
+        }
+    }
+
+    _journalRenderTable(container, records) {
+        const table = document.createElement('table');
+        table.className = 'journal-table';
+
+        // THEAD — two-level header
+        const thead = document.createElement('thead');
+
+        const hr1 = document.createElement('tr');
+        [
+            ['操作时间', 1], ['操作', 1], ['操作原因', 3], ['事后回溯', 3], ['其他', 1], ['', 1]
+        ].forEach(([text, span]) => {
+            const th = document.createElement('th');
+            th.textContent = text;
+            if (span > 1) th.colSpan = span;
+            hr1.appendChild(th);
+        });
+        thead.appendChild(hr1);
+
+        const hr2 = document.createElement('tr');
+        ['', '', '个股名称', '外部因素', '内部因素', '成功/失败', '原因分析', '改进措施', '', ''].forEach(text => {
+            const th = document.createElement('th');
+            th.textContent = text;
+            hr2.appendChild(th);
+        });
+        thead.appendChild(hr2);
+        table.appendChild(thead);
+
+        // TBODY
+        const tbody = document.createElement('tbody');
+        const fields = ['date', 'action', 'stockName', 'externalFactor', 'internalFactor', 'result', 'analysis', 'improvement', 'notes'];
+        const leftAlignFields = new Set(['externalFactor', 'internalFactor', 'analysis', 'improvement']); // text-heavy columns
+
+        records.forEach((rec, rowIdx) => {
+            const tr = document.createElement('tr');
+
+            fields.forEach((field) => {
+                const td = document.createElement('td');
+                td.textContent = rec[field] ?? '';
+                td.contentEditable = 'true';
+                td.dataset.field = field;
+                td.dataset.row = rowIdx;
+                td.setAttribute('role', 'textbox');
+                td.setAttribute('aria-label', this.JOURNAL_FIELD_LABELS[field] || field);
+
+                if (leftAlignFields.has(field)) {
+                    td.classList.add('cell-left');
+                }
+
+                // Color-code result column
+                if (field === 'result') {
+                    const v = (rec[field] ?? '').trim();
+                    if (this.JOURNAL_RESULT_SUCCESS_MARKERS.some(m => v === m || v.startsWith(m))) {
+                        td.classList.add('cell-success');
+                    } else if (this.JOURNAL_RESULT_FAILURE_MARKERS.some(m => v === m || v.startsWith(m))) {
+                        td.classList.add('cell-fail');
+                    }
+                }
+
+                tr.appendChild(td);
+            });
+
+            // Delete button cell
+            const delTd = document.createElement('td');
+            delTd.className = 'journal-col-delete';
+            const delBtn = document.createElement('button');
+            delBtn.className = 'journal-delete-row';
+            delBtn.textContent = '×';
+            delBtn.title = '删除此行';
+            delBtn.setAttribute('aria-label', `删除第 ${rowIdx + 1} 行`);
+            delBtn.dataset.row = rowIdx;
+            delTd.appendChild(delBtn);
+            tr.appendChild(delTd);
+
+            tbody.appendChild(tr);
+        });
+
+        table.appendChild(tbody);
+        container.innerHTML = '';
+        container.appendChild(table);
+    }
+
+    _journalReadTable(container) {
+        const records = [];
+        const rows = container.querySelectorAll('tbody tr');
+        const fields = ['date', 'action', 'stockName', 'externalFactor', 'internalFactor', 'result', 'analysis', 'improvement', 'notes'];
+
+        rows.forEach(row => {
+            const rec = {};
+            const cells = row.querySelectorAll('td[contenteditable]');
+            cells.forEach((td, i) => {
+                if (i < fields.length) {
+                    rec[fields[i]] = td.textContent.trim();
+                }
+            });
+            records.push(rec);
+        });
+
+        return records;
+    }
+
+    _journalUpdateResultCell(td) {
+        const v = td.textContent.trim();
+        td.classList.remove('cell-success', 'cell-fail');
+        if (this.JOURNAL_RESULT_SUCCESS_MARKERS.some(m => v === m || v.startsWith(m))) {
+            td.classList.add('cell-success');
+        } else if (this.JOURNAL_RESULT_FAILURE_MARKERS.some(m => v === m || v.startsWith(m))) {
+            td.classList.add('cell-fail');
+        }
+    }
+
+    _journalShowStatus(msg, isGood) {
+        const el = document.getElementById('journalStatus');
+        if (!el) return;
+        el.textContent = msg;
+        el.className = 'journal-status' + (isGood ? ' saved' : '');
+        clearTimeout(this._journalStatusTimer);
+        if (isGood) {
+            this._journalStatusTimer = setTimeout(() => {
+                el.textContent = '';
+                el.className = 'journal-status';
+            }, 2000);
+        }
+    }
+
+    _journalBindToolbar(container, records) {
+        // Prevent duplicate bindings (container persists across re-renders)
+        if (container.dataset.journalBound === '1') return;
+        container.dataset.journalBound = '1';
+
+        const self = this;
+
+        // --- Cell edit → auto-save ---
+        container.addEventListener('blur', e => {
+            const td = e.target;
+            if (td && td.contentEditable === 'true' && td.closest('.journal-table')) {
+                const newRecords = self._journalReadTable(container);
+                self._journalSaveToStorage(newRecords);
+
+                // Update result cell coloring
+                if (td.dataset.field === 'result') {
+                    self._journalUpdateResultCell(td);
+                }
+
+                self._journalShowStatus('已保存', true);
+            }
+        }, true);
+
+        // --- Delete row ---
+        container.addEventListener('click', e => {
+            const btn = e.target.closest('.journal-delete-row');
+            if (!btn) return;
+            const rowIdx = parseInt(btn.dataset.row, 10);
+            if (isNaN(rowIdx)) return;
+
+            const rows = container.querySelectorAll('tbody tr');
+            if (rows.length <= 1) {
+                // Last row: clear instead of delete
+                rows[0].querySelectorAll('td[contenteditable]').forEach(td => {
+                    td.textContent = '';
+                    td.classList.remove('cell-success', 'cell-fail');
+                });
+            } else {
+                rows[rowIdx].remove();
+                // Re-index remaining rows
+                container.querySelectorAll('tbody tr').forEach((tr, i) => {
+                    tr.querySelectorAll('td[contenteditable]').forEach(td => { td.dataset.row = i; });
+                    const delBtn = tr.querySelector('.journal-delete-row');
+                    if (delBtn) delBtn.dataset.row = i;
+                });
+            }
+
+            const newRecords = self._journalReadTable(container);
+            self._journalSaveToStorage(newRecords);
+            self._journalShowStatus('已保存', true);
+        });
+
+        // --- Toolbar buttons ---
+        const addBtn = document.getElementById('journalAddRow');
+        const saveBtn = document.getElementById('journalSave');
+        const exportBtn = document.getElementById('journalExport');
+
+        if (addBtn) {
+            addBtn.onclick = () => {
+                const records = self._journalReadTable(container);
+                const empty = { date: '', action: '', stockName: '', externalFactor: '', internalFactor: '', result: '', analysis: '', improvement: '', notes: '' };
+                records.push(empty);
+                self._journalSaveToStorage(records);
+                self._journalRenderTable(container, records);
+                self._journalShowStatus('已添加空行', true);
+
+                // Scroll to new row and focus first cell
+                const lastRow = container.querySelector('tbody tr:last-child');
+                if (lastRow) {
+                    lastRow.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    const firstCell = lastRow.querySelector('td[contenteditable]');
+                    if (firstCell) firstCell.focus();
+                }
+            };
+        }
+
+        if (saveBtn) {
+            saveBtn.onclick = async () => {
+                const records = self._journalReadTable(container);
+                self._journalSaveToStorage(records);
+                const ok = await self._journalSaveToFile(records);
+                self._journalShowStatus(ok ? '已保存到文件' : '保存失败，请检查服务器状态或文件权限', ok);
+            };
+        }
+
+        if (exportBtn) {
+            exportBtn.onclick = () => {
+                const records = self._journalReadTable(container);
+                const json = JSON.stringify({ records }, null, 2);
+                const blob = new Blob([json], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'trading_journal_' + new Date().toISOString().slice(0, 10) + '.json';
+                a.click();
+                URL.revokeObjectURL(url);
+                self._journalShowStatus('已导出', true);
+            };
+        }
+
+    }
+
     init() {
         if (typeof echarts === 'undefined') {
             this.showError('ECharts 库加载失败，请刷新页面重试');
@@ -168,6 +483,7 @@ class VIXDashboard {
 
         this.populatePercentileOptions();
         this.renderThresholdTable();
+        this.loadTradingJournal();
 
         const chartDom = document.getElementById('chart');
         this.chart = echarts.init(chartDom);

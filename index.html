@@ -99,6 +99,19 @@
 
         <div id="chart" class="chart" aria-label="VIX 历史 K 线、历史百分位与纳斯达克100 / 标普500 K 线图，可使用鼠标滚轮缩放、拖动平移"></div>
 
+        <div class="journal" id="tradingJournal">
+            <div class="journal-header">
+                <h3>交易复盘记录表</h3>
+                <div class="journal-toolbar">
+                    <button id="journalAddRow" class="journal-btn journal-btn-add" title="添加一条空记录">+ 添加记录</button>
+                    <button id="journalSave" class="journal-btn journal-btn-save" title="保存到 JSON 文件">保存</button>
+                    <button id="journalExport" class="journal-btn journal-btn-export" title="下载当前数据为 JSON 文件">导出 JSON</button>
+                </div>
+            </div>
+            <div id="journalTableContainer" class="journal-table-wrapper"></div>
+            <div id="journalStatus" class="journal-status" aria-live="polite" aria-atomic="true"></div>
+        </div>
+
         <div class="info">
             <h3>使用说明</h3>
             <ul>
