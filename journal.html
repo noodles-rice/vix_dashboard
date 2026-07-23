@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
+    <title>交易复盘记录表</title>
+    <link rel="stylesheet" href="assets/style.css?v=19">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>交易复盘记录表</h1>
+            <p class="subtitle">可编辑交易日志 · 本地自动保存 · 支持导出备份</p>
+            <nav class="page-nav">
+                <a href="index.html">← 返回 VIX 历史数据看板</a>
+            </nav>
+        </header>
+
+        <div class="journal" id="tradingJournal">
+            <div class="journal-header">
+                <h3>交易复盘记录</h3>
+                <div class="journal-toolbar">
+                    <button id="journalAddRow" class="journal-btn journal-btn-add" title="添加一条空记录">+ 添加记录</button>
+                    <button id="journalSave" class="journal-btn journal-btn-save" title="保存到 JSON 文件">保存</button>
+                    <button id="journalExport" class="journal-btn journal-btn-export" title="下载当前数据为 JSON 文件">导出 JSON</button>
+                </div>
+            </div>
+            <div id="journalTableContainer" class="journal-table-wrapper"></div>
+            <div id="journalStatus" class="journal-status" aria-live="polite" aria-atomic="true"></div>
+        </div>
+
+        <div class="info">
+            <h3>使用说明</h3>
+            <ul>
+                <li><strong>编辑：</strong>直接点击表格单元格即可修改，失焦后自动保存到浏览器本地存储</li>
+                <li><strong>添加：</strong>点击「+ 添加记录」插入空行</li>
+                <li><strong>删除：</strong>点击每行末尾的 × 删除该行；只剩一行时清空内容而非删除</li>
+                <li><strong>保存：</strong>点击「保存」尝试写入服务端 <code>data/trading_journal.json</code>（需要本地服务器支持写入）</li>
+                <li><strong>导出：</strong>点击「导出 JSON」下载当前记录备份</li>
+                <li><strong>结果着色：</strong>「成功/失败」列输入“成功/盈”显示绿色，“失败/亏”显示红色</li>
+            </ul>
+        </div>
+    </div>
+
+    <script src="assets/journal.js?v=3"></script>
+</body>
+</html>
