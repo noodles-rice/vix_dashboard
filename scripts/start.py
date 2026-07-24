@@ -559,9 +559,15 @@ class CORSRequestHandler(http.server.SimpleHTTPRequestHandler):
         print(f"[HTTP] {self.address_string()} - {fmt % args}")
 
 
+class ReusableTCPServer(socketserver.TCPServer):
+    # 允许地址复用（SO_REUSEADDR），避免服务关闭后残留的 TIME_WAIT
+    # 连接导致短时间内重启时报 "Address already in use"
+    allow_reuse_address = True
+
+
 def run_server(port):
     """启动本地 HTTP 服务。"""
-    with socketserver.TCPServer(("", port), CORSRequestHandler) as httpd:
+    with ReusableTCPServer(("", port), CORSRequestHandler) as httpd:
         print(f"[VIX Server] 服务已启动: http://localhost:{port}")
         print("[VIX Server] 按 Ctrl+C 停止服务")
         try:
