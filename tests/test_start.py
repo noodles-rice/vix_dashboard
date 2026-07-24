@@ -188,7 +188,7 @@ class TestTradingJournalEndpoints(unittest.TestCase):
             try:
                 server, port = self._start_server()
                 try:
-                    records = [{"date": "2026-07-14", "action": "买入", "stockName": "TQQQ"}]
+                    records = [{"date": "2026-07-14", "action": "买入", "stockName": "TQQQ", "result": "成功", "pnl": "+1200"}]
                     body = self._make_payload(records)
                     with self._post(port, "/data/trading_journal.json", body) as resp:
                         self.assertEqual(resp.status, 200)

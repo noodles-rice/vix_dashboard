@@ -41,6 +41,7 @@ JOURNAL_FIELDS = {
     "externalFactor",
     "internalFactor",
     "result",
+    "pnl",
     "analysis",
     "improvement",
     "notes",

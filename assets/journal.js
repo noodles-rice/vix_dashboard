@@ -12,10 +12,12 @@ class TradingJournal {
             externalFactor: '外部因素',
             internalFactor: '内部因素',
             result: '成功/失败',
+            pnl: '盈亏',
             analysis: '原因分析',
             improvement: '改进措施',
             notes: '备注/其他'
         };
+        this.JOURNAL_FIELDS = ['date', 'action', 'stockName', 'externalFactor', 'internalFactor', 'result', 'pnl', 'analysis', 'improvement', 'notes'];
         this.JOURNAL_RESULT_SUCCESS_MARKERS = ['成功', '盈'];
         this.JOURNAL_RESULT_FAILURE_MARKERS = ['失败', '亏'];
         this.init();
@@ -100,7 +102,7 @@ class TradingJournal {
 
         const hr1 = document.createElement('tr');
         [
-            ['操作时间', 1], ['操作', 1], ['操作原因', 3], ['事后回溯', 3], ['其他', 1], ['', 1]
+            ['操作时间', 1], ['操作', 1], ['操作原因', 3], ['事后回溯', 4], ['其他', 1], ['', 1]
         ].forEach(([text, span]) => {
             const th = document.createElement('th');
             th.textContent = text;
@@ -110,7 +112,7 @@ class TradingJournal {
         thead.appendChild(hr1);
 
         const hr2 = document.createElement('tr');
-        ['', '', '标的名称', '外部因素', '内部因素', '成功/失败', '原因分析', '改进措施', '', ''].forEach(text => {
+        ['', '', '标的名称', '外部因素', '内部因素', '成功/失败', '盈亏', '原因分析', '改进措施', '', ''].forEach(text => {
             const th = document.createElement('th');
             th.textContent = text;
             hr2.appendChild(th);
@@ -120,7 +122,7 @@ class TradingJournal {
 
         // TBODY
         const tbody = document.createElement('tbody');
-        const fields = ['date', 'action', 'stockName', 'externalFactor', 'internalFactor', 'result', 'analysis', 'improvement', 'notes'];
+        const fields = this.JOURNAL_FIELDS;
 
         records.forEach((rec, rowIdx) => {
             const tr = document.createElement('tr');
@@ -170,7 +172,7 @@ class TradingJournal {
     _readTable() {
         const records = [];
         const rows = this.container.querySelectorAll('tbody tr');
-        const fields = ['date', 'action', 'stockName', 'externalFactor', 'internalFactor', 'result', 'analysis', 'improvement', 'notes'];
+        const fields = this.JOURNAL_FIELDS;
 
         rows.forEach(row => {
             const rec = {};
@@ -273,7 +275,7 @@ class TradingJournal {
         if (addBtn) {
             addBtn.onclick = () => {
                 const records = self._readTable();
-                const empty = { date: '', action: '', stockName: '', externalFactor: '', internalFactor: '', result: '', analysis: '', improvement: '', notes: '' };
+                const empty = Object.fromEntries(self.JOURNAL_FIELDS.map(f => [f, '']));
                 records.push(empty);
                 self._saveToStorage(records);
                 self._renderTable(records);

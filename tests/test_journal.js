@@ -136,7 +136,7 @@ class MockElement {
     }
 }
 
-const FIELDS = ['date', 'action', 'stockName', 'externalFactor', 'internalFactor', 'result', 'analysis', 'improvement', 'notes'];
+const FIELDS = ['date', 'action', 'stockName', 'externalFactor', 'internalFactor', 'result', 'pnl', 'analysis', 'improvement', 'notes'];
 
 let currentContainer;
 let currentStatus;
@@ -341,6 +341,32 @@ function testRenderTableResultColoring() {
     assert.ok(!neutralCell.classList.contains('cell-fail'));
 }
 
+function testRenderTablePnlColumn() {
+    resetDom();
+    const journal = new TradingJournal();
+    journal._renderTable([
+        { date: '2024-01-01', result: '成功', pnl: '+1200' },
+    ]);
+
+    // 表头第二行应包含「盈亏」，且紧跟在「成功/失败」之后
+    const table = currentContainer.children.find(c => c.tagName === 'table');
+    const thead = table.children.find(c => c.tagName === 'thead');
+    const headerTexts = thead.children[1].children.map(th => th.textContent);
+    const resultIdx = headerTexts.indexOf('成功/失败');
+    assert.ok(resultIdx >= 0);
+    assert.strictEqual(headerTexts[resultIdx + 1], '盈亏');
+
+    // 一级表头「事后回溯」的 colSpan 应覆盖 4 个子项
+    const groupTh = thead.children[0].children.find(th => th.textContent === '事后回溯');
+    assert.strictEqual(groupTh.colSpan, 4);
+
+    // 每行应有 pnl 可编辑单元格，内容为记录中的盈亏值
+    const rows = currentContainer.querySelectorAll('tbody tr');
+    const pnlCell = rows[0].querySelectorAll('td[contenteditable]').find(td => td.dataset.field === 'pnl');
+    assert.ok(pnlCell);
+    assert.strictEqual(pnlCell.textContent, '+1200');
+}
+
 async function runTests() {
     const tests = [
         testExports,
@@ -349,6 +375,7 @@ async function runTests() {
         testReadTable,
         testUpdateResultCell,
         testRenderTableResultColoring,
+        testRenderTablePnlColumn,
     ];
 
     let passed = 0;
